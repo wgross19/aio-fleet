@@ -242,7 +242,7 @@ def _app_manifest_failures(repo: RepoConfig) -> list[str]:
 
 
 def cmd_doctor(args: argparse.Namespace) -> int:
-    manifest = load_manifest(Path(args.manifest))
+    manifest = load_manifest(Path(args.manifest), allow_empty=True)
     checks = fleet_doctor_report(
         manifest,
         repos=args.repo,

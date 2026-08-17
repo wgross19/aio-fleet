@@ -104,23 +104,25 @@ class FleetManifest:
             raise ManifestError(f"unknown repo in fleet.yml: {name}") from exc
 
 
-def load_manifest(path: Path = Path("fleet.yml")) -> FleetManifest:
+def load_manifest(
+    path: Path = Path("fleet.yml"), *, allow_empty: bool = False
+) -> FleetManifest:
     if not path.exists():
         raise ManifestError(f"manifest not found: {path}")
     data = yaml.safe_load(path.read_text()) or {}
     if not isinstance(data, dict):
         raise ManifestError("fleet.yml must contain a mapping")
     manifest = FleetManifest(path=path, raw=data)
-    validate_manifest(manifest)
+    validate_manifest(manifest, allow_empty=allow_empty)
     return manifest
 
 
-def validate_manifest(manifest: FleetManifest) -> None:
+def validate_manifest(manifest: FleetManifest, *, allow_empty: bool = False) -> None:
     required_top = ["owner", "repos"]
     for key in required_top:
         if key not in manifest.raw:
             raise ManifestError(f"fleet.yml missing required key: {key}")
-    if not manifest.repos:
+    if not manifest.repos and not allow_empty:
         raise ManifestError("fleet.yml must define at least one repo")
 
     for name, repo in manifest.repos.items():
