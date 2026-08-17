@@ -1,0 +1,30 @@
+schema_version: 1
+owner: wgross19
+default_branch: main
+awesome_unraid_repository: wgross19/awesome-unraid
+dashboard:
+  destination_repos:
+    awesome-unraid:
+      github_repo: wgross19/awesome-unraid
+      public: true
+      role: catalog destination
+      description: Community Applications catalog for validated Unraid App Factory source changes.
+      next_action: Validate source app state before catalog synchronization.
+defaults:
+  python_version: "3.13"
+  publish_platforms: linux/amd64,linux/arm64
+  integration_pytest_args: tests/integration -m integration
+  non_release_paths:
+    - .aio-fleet.yml
+    - README.md
+    - AGENTS.md
+    - docs/**
+    - pyproject.toml
+    - tests/**
+    - .github/**
+    - .trunk/**
+  release_transaction:
+    autopilot: false
+    checkout_policy: standard
+    publish_policy: central-control
+repos: {}

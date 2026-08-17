@@ -1,0 +1,161 @@
+owner: wgross19
+default_branch: main
+# Required check producer IDs captured from live check runs:
+# - GitHub Actions: 15368
+# - CodeQL: 57789
+# - wgross19 AIO Fleet: 3565017
+# - Superagent Security: 3287076
+defaults:
+  repository:
+    visibility: public
+    homepage_url: https://aethereal.dev
+    has_issues: true
+    has_projects: false
+    has_wiki: false
+    delete_branch_on_merge: true
+    # Enables GitHub native auto-merge so the release-prepare workflow can let a
+    # validated, signed `chore(release)` PR merge itself once `aio-fleet /
+    # required` passes — removing the manual release-PR merge. The protected
+    # registry-publish gate (the publish dispatch) is unaffected.
+    allow_auto_merge: true
+    allow_merge_commit: true
+    allow_rebase_merge: false
+    allow_squash_merge: true
+  branch_protection:
+    strict_required_status_checks: true
+    enforce_admins: false
+    require_conversation_resolution: true
+    require_signed_commits: true
+    required_approving_review_count: 0
+  actions:
+    enabled: true
+    allowed_actions: selected
+    github_owned_allowed: true
+    verified_allowed: true
+    sha_pinning_required: true
+    patterns_allowed:
+      - peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1
+repositories:
+  aio-fleet:
+    required_checks:
+      - test
+      - infra
+      - Analyze (actions)
+      - Analyze (python)
+      - Superagent Security Scan
+      - Contributor trust
+    required_check_app_ids:
+      test: 15368
+      infra: 15368
+      Analyze (actions): 15368
+      Analyze (python): 15368
+      Superagent Security Scan: 3287076
+      Contributor trust: 3287076
+  awesome-unraid:
+    required_checks:
+      - validate-catalog
+      - CodeQL
+      - Analyze (actions)
+      - Superagent Security Scan
+      - Contributor trust
+    required_check_app_ids:
+      validate-catalog: 15368
+      CodeQL: 57789
+      Analyze (actions): 15368
+      Superagent Security Scan: 3287076
+      Contributor trust: 3287076
+    required_secrets:
+      - AIO_FLEET_BOT_TOKEN
+  unraid-aio-template:
+    repository:
+      visibility: public
+      homepage_url: ""
+    required_checks:
+      - aio-fleet / required
+      - Superagent Security Scan
+      - Contributor trust
+    required_check_app_id: 3565017
+    required_check_app_ids:
+      Superagent Security Scan: 3287076
+      Contributor trust: 3287076
+  sure-aio:
+    required_checks:
+      - aio-fleet / required
+      - Superagent Security Scan
+      - Contributor trust
+    required_check_app_id: 3565017
+    required_check_app_ids:
+      Superagent Security Scan: 3287076
+      Contributor trust: 3287076
+  simplelogin-aio:
+    required_checks:
+      - aio-fleet / required
+      - Superagent Security Scan
+      - Contributor trust
+    required_check_app_id: 3565017
+    required_check_app_ids:
+      Superagent Security Scan: 3287076
+      Contributor trust: 3287076
+  khoj-aio:
+    required_checks:
+      - aio-fleet / required
+      - Superagent Security Scan
+      - Contributor trust
+    required_check_app_id: 3565017
+    required_check_app_ids:
+      Superagent Security Scan: 3287076
+      Contributor trust: 3287076
+  mem0-aio:
+    required_checks:
+      - aio-fleet / required
+      - Superagent Security Scan
+      - Contributor trust
+    required_check_app_id: 3565017
+    required_check_app_ids:
+      Superagent Security Scan: 3287076
+      Contributor trust: 3287076
+  infisical-aio:
+    required_checks:
+      - aio-fleet / required
+      - Superagent Security Scan
+      - Contributor trust
+    required_check_app_id: 3565017
+    required_check_app_ids:
+      Superagent Security Scan: 3287076
+      Contributor trust: 3287076
+  dify-aio:
+    required_checks:
+      - aio-fleet / required
+      - Superagent Security Scan
+      - Contributor trust
+    required_check_app_id: 3565017
+    required_check_app_ids:
+      Superagent Security Scan: 3287076
+      Contributor trust: 3287076
+  signoz-aio:
+    required_checks:
+      - aio-fleet / required
+      - Superagent Security Scan
+      - Contributor trust
+    required_check_app_id: 3565017
+    required_check_app_ids:
+      Superagent Security Scan: 3287076
+      Contributor trust: 3287076
+  nanoclaw-aio:
+    required_checks:
+      - aio-fleet / required
+      - Superagent Security Scan
+      - Contributor trust
+    required_check_app_id: 3565017
+    required_check_app_ids:
+      Superagent Security Scan: 3287076
+      Contributor trust: 3287076
+  penpot-aio:
+    required_checks:
+      - aio-fleet / required
+      - Superagent Security Scan
+      - Contributor trust
+    required_check_app_id: 3565017
+    required_check_app_ids:
+      Superagent Security Scan: 3287076
+      Contributor trust: 3287076

@@ -1,0 +1,96 @@
+{
+  "$id": "https://github.com/wgross19/aio-fleet/schemas/fleet-report-v3.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "activity": {
+      "items": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "cleanup": {
+      "items": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "destination_repos": {
+      "items": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "generated_at": {
+      "type": "string"
+    },
+    "issue_repo": {
+      "type": "string"
+    },
+    "registry": {
+      "items": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "rehab_repos": {
+      "items": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "releases": {
+      "items": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "rows": {
+      "items": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "schema_version": {
+      "const": 3
+    },
+    "summary": {
+      "additionalProperties": true,
+      "type": "object"
+    },
+    "warnings": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "workflow": {
+      "additionalProperties": true,
+      "type": "object"
+    }
+  },
+  "required": [
+    "schema_version",
+    "generated_at",
+    "issue_repo",
+    "warnings",
+    "summary",
+    "rows",
+    "activity",
+    "destination_repos",
+    "rehab_repos",
+    "registry",
+    "releases",
+    "cleanup",
+    "workflow"
+  ],
+  "title": "AIO Fleet Report",
+  "type": "object"
+}

@@ -1,0 +1,102 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install package
+        run: |
+          set -euo pipefail
+          python -m pip install -e ".[dev]"
+
+      - name: Run tests
+        run: |
+          set -euo pipefail
+          python -m pytest
+
+      - name: Install actionlint
+        run: |
+          set -euo pipefail
+          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.8
+
+      - name: Run actionlint
+        run: |
+          set -euo pipefail
+          "$(go env GOPATH)/bin/actionlint" \
+            -ignore 'SC2129' \
+            .github/workflows/*.yml
+
+  infra:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install package
+        run: |
+          set -euo pipefail
+          python -m pip install -e ".[dev]"
+
+      - name: Install OpenTofu
+        env:
+          TOFU_VERSION: 1.11.6
+        run: |
+          set -euo pipefail
+          archive="tofu_${TOFU_VERSION}_linux_amd64.zip"
+          base_url="https://github.com/opentofu/opentofu/releases/download/v${TOFU_VERSION}"
+          curl -fsSLO "${base_url}/${archive}"
+          curl -fsSLO "${base_url}/tofu_${TOFU_VERSION}_SHA256SUMS"
+          grep " ${archive}$" "tofu_${TOFU_VERSION}_SHA256SUMS" | sha256sum -c -
+          unzip -q "${archive}" tofu
+          install tofu /usr/local/bin/tofu
+          tofu version
+
+      - name: Validate OpenTofu module
+        run: |
+          set -euo pipefail
+          cd infra/github
+          tofu init -backend=false
+          tofu fmt -check -recursive
+          tofu validate
+
+      - name: Validate GitHub policy files
+        run: |
+          set -euo pipefail
+          python -m aio_fleet infra doctor --skip-tofu

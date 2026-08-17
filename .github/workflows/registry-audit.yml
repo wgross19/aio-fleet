@@ -1,0 +1,142 @@
+name: Registry Audit
+
+#checkov:skip=CKV_GHA_7:workflow_dispatch input only controls whether this reporting job fails after read-only verification
+on:
+  schedule:
+    - cron: 37 9 * * *
+  workflow_dispatch:
+    inputs:
+      fail_on_missing:
+        description: Fail the run if any expected registry tag is missing
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  registry-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Enforce trusted ref for manual runs
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        env:
+          EXPECTED_REF: refs/heads/${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REF}" != "${EXPECTED_REF}" ]]; then
+            echo "Manual registry-audit runs are restricted to ${EXPECTED_REF}; got ${GITHUB_REF}." >&2
+            exit 1
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install aio-fleet
+        run: |
+          set -euo pipefail
+          python -m pip install -e ".[dev]"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
+
+      - name: Resolve GitHub App token
+        id: app-token
+        env:
+          AIO_FLEET_APP_CLIENT_ID: ${{ vars.AIO_FLEET_APP_CLIENT_ID }}
+          AIO_FLEET_APP_ID: ${{ secrets.AIO_FLEET_APP_ID }}
+          AIO_FLEET_APP_INSTALLATION_ID: ${{ secrets.AIO_FLEET_APP_INSTALLATION_ID }}
+          AIO_FLEET_APP_PRIVATE_KEY: ${{ secrets.AIO_FLEET_APP_PRIVATE_KEY }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          token="$(python -m aio_fleet.github_app --fallback-env GITHUB_TOKEN)"
+          if [[ -z "${token}" ]]; then
+            echo "Unable to resolve a GitHub token for registry audit checkouts" >&2
+            exit 1
+          fi
+          echo "::add-mask::${token}"
+          printf 'token=%s\n' "${token}" >> "${GITHUB_OUTPUT}"
+
+      - name: Verify registry tags
+        id: verify
+        env:
+          AIO_FLEET_WORKFLOW_TOKEN: ${{ steps.app-token.outputs.token }}
+        #checkov:skip=CKV_SECRET_6:the script handles a masked runtime GitHub App token for checkout auth
+        run: |
+          set -euo pipefail
+          python -m aio_fleet workflow registry-audit \
+            --checkout-root registry-checkouts \
+            --output registry-report.json \
+            --github-output "${GITHUB_OUTPUT}" \
+            2> >(tee registry-audit.err >&2)
+
+      - name: Publish registry summary
+        if: ${{ always() }}
+        env:
+          VERIFY_STATUS: ${{ steps.verify.outputs.status }}
+        run: |
+          set -euo pipefail
+          if [[ ! -f registry-report.json ]]; then
+            {
+              echo "## Registry Audit"
+              echo
+              echo "Registry audit did not produce a report."
+            } >> "${GITHUB_STEP_SUMMARY}"
+            exit 0
+          fi
+          python -m aio_fleet workflow registry-summary \
+            --input registry-report.json \
+            --status "${VERIFY_STATUS}" \
+            --output "${GITHUB_STEP_SUMMARY}"
+
+      - name: Alert registry audit
+        if: ${{ always() }}
+        env:
+          AIO_FLEET_KUMA_PUSH_URL: ${{ secrets.AIO_FLEET_KUMA_PUSH_URL }}
+          AIO_FLEET_ALERT_WEBHOOK_URL: ${{ secrets.AIO_FLEET_ALERT_WEBHOOK_URL }}
+          DETAILS_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set +e
+          if [[ -f registry-report.json ]]; then
+            python -m aio_fleet alert send \
+              --event registry-audit \
+              --report-json registry-report.json \
+              --failure-file registry-audit.err \
+              --details-url "${DETAILS_URL}" \
+              --format json
+          else
+            python -m aio_fleet alert send \
+              --event registry-audit \
+              --status failure \
+              --summary "Registry audit did not produce a report" \
+              --failure-file registry-audit.err \
+              --details-url "${DETAILS_URL}" \
+              --format json
+          fi
+          exit 0
+
+      - name: Enforce manual registry audit
+        env:
+          FAIL_ON_MISSING: ${{ github.event_name == 'workflow_dispatch' && inputs.fail_on_missing || false }}
+          VERIFY_STATUS: ${{ steps.verify.outputs.status }}
+        run: |
+          set -euo pipefail
+          if [[ "${FAIL_ON_MISSING}" == "true" && "${VERIFY_STATUS}" != "0" ]]; then
+            echo "Registry audit found missing or failed tags." >&2
+            exit 1
+          fi

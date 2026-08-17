@@ -1,0 +1,2229 @@
+name: AIO Fleet Control Plane
+
+#checkov:skip=CKV_GHA_7:workflow_dispatch inputs are the intentional control-plane entry point; repo and sha are validated before checkout
+#checkov:skip=CKV_SECRET_6:poll checkout auth is a runtime-generated masked GitHub App token, not a literal secret
+on:
+  schedule:
+    - cron: 17 * * * *
+    - cron: 43 10 * * *
+  issues:
+    types:
+      - edited
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Control-plane mode
+        required: true
+        default: poll
+        type: choice
+        options:
+          - poll
+          - control-check
+          - upstream-monitor
+          - release-prepare
+          - fleet-dashboard
+          - standards-reconcile
+          - catalog-changelog
+          - alert-test
+          - dockerhub-tag-cleanup
+      repo:
+        description: App repo name for control-check mode
+        required: false
+        default: ""
+      sha:
+        description: App commit SHA for control-check mode
+        required: false
+        default: ""
+      event:
+        description: Event policy for control-check mode
+        required: false
+        default: pull_request
+        type: choice
+        options:
+          - pull_request
+          - push
+          - release
+          - workflow_dispatch
+      publish:
+        description: Include registry publish step in control-check mode
+        required: false
+        default: false
+        type: boolean
+      publish_component:
+        description: Optional component name to publish in control-check mode
+        required: false
+        default: ""
+      create_checks:
+        description: Create queued checks during poll mode
+        required: false
+        default: false
+        type: boolean
+      dry_run:
+        description: Print actions without mutating GitHub or registries
+        required: false
+        default: true
+        type: boolean
+      dockerhub_image:
+        description: Docker Hub image for tag cleanup
+        required: false
+        default: ""
+      dockerhub_tags:
+        description: Comma or newline separated Docker Hub tags to delete
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+  checks: write
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ inputs.mode || 'event' }}-${{ inputs.repo || github.ref }}-${{ inputs.sha || github.run_id }}-${{ inputs.publish_component || 'all' }}
+  cancel-in-progress: false
+
+jobs:
+  control-plane:
+    runs-on: ubuntu-latest
+    outputs:
+      poll_targets: ${{ steps.poll.outputs.targets || steps.upstream-poll-targets.outputs.targets || steps.release-poll-targets.outputs.targets }}
+      poll_run_checks: ${{ steps.poll.outputs.run_checks || steps.upstream-poll-targets.outputs.run_checks || steps.release-poll-targets.outputs.run_checks }}
+      poll_has_targets: ${{ steps.poll.outputs.has_targets || steps.upstream-poll-targets.outputs.has_targets || steps.release-poll-targets.outputs.has_targets }}
+      poll_publish_targets: ${{ steps.poll.outputs.publish_targets }}
+      poll_has_publish_targets: ${{ steps.poll.outputs.has_publish_targets }}
+      manual_control_check_outcome: ${{ steps.central-control-check.outcome }}
+      manual_start_check_outcome: ${{ steps.start-central-control-check.outcome }}
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+    steps:
+      - name: Enforce trusted ref for manual runs
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        env:
+          EXPECTED_REF: refs/heads/${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REF}" != "${EXPECTED_REF}" ]]; then
+            echo "Manual control-plane runs are restricted to ${EXPECTED_REF}; got ${GITHUB_REF}." >&2
+            exit 1
+          fi
+
+      - name: Checkout aio-fleet
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install aio-fleet
+        run: |
+          set -euo pipefail
+          python -m pip install -e ".[dev]"
+
+      - name: Install Trunk
+        uses: trunk-io/trunk-action/setup@75699af9e26881e564e9d832ef7dc3af25ec031b # v1
+
+      - name: Resolve GitHub App token
+        id: app-token
+        if: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.mode != 'alert-test') || github.event_name == 'issues' }}
+        env:
+          AIO_FLEET_APP_CLIENT_ID: ${{ vars.AIO_FLEET_APP_CLIENT_ID }}
+          AIO_FLEET_APP_ID: ${{ secrets.AIO_FLEET_APP_ID }}
+          AIO_FLEET_APP_INSTALLATION_ID: ${{ secrets.AIO_FLEET_APP_INSTALLATION_ID }}
+          AIO_FLEET_APP_PRIVATE_KEY: ${{ secrets.AIO_FLEET_APP_PRIVATE_KEY }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          token="$(python -m aio_fleet.github_app --fallback-env GITHUB_TOKEN)"
+          if [[ -z "${token}" ]]; then
+            echo "Unable to resolve a GitHub token for app checkout" >&2
+            exit 1
+          fi
+          echo "::add-mask::${token}"
+          printf 'token=%s\n' "${token}" >> "${GITHUB_OUTPUT}"
+
+      - name: Read dashboard issue controls
+        id: dashboard-controls
+        if: ${{ github.event_name == 'issues' && github.event.action == 'edited' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python -m aio_fleet fleet-dashboard commands \
+            --issue-repo "${{ github.repository }}" \
+            --issue-number "${{ github.event.issue.number }}" \
+            --format github-output >> "${GITHUB_OUTPUT}"
+
+      - name: Test alert webhook
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'alert-test' }}
+        env:
+          AIO_FLEET_ALERT_WEBHOOK_URL: ${{ secrets.AIO_FLEET_ALERT_WEBHOOK_URL }}
+          DETAILS_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          python -m aio_fleet alert doctor --require-alerts --format json
+          python -m aio_fleet alert test \
+            --event upstream-update \
+            --status warning \
+            --summary "aio-fleet Discord alert test" \
+            --details-url "${DETAILS_URL}" \
+            --format json
+
+      - name: Delete Docker Hub tags
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'dockerhub-tag-cleanup' }}
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_DELETE_TOKEN: ${{ !inputs.dry_run && secrets.DOCKERHUB_DELETE_TOKEN || '' }}
+          TARGET_REPO: ${{ inputs.repo }}
+          PUBLISH_COMPONENT: ${{ inputs.publish_component }}
+          DOCKERHUB_IMAGE: ${{ inputs.dockerhub_image }}
+          DOCKERHUB_TAGS: ${{ inputs.dockerhub_tags }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          cleanup_component="${PUBLISH_COMPONENT:-aio}"
+          if [[ "${DRY_RUN}" != "true" ]]; then
+            if [[ -z "${TARGET_REPO}" ]]; then
+              echo "repo is required for live Docker Hub cleanup." >&2
+              exit 1
+            fi
+            if [[ -n "${DOCKERHUB_IMAGE}" ]]; then
+              echo "dockerhub_image is dry-run only; live cleanup must use repo/component." >&2
+              exit 1
+            fi
+            python -m aio_fleet registry preflight \
+              --mode cleanup \
+              --repo "${TARGET_REPO}" \
+              --component "${cleanup_component}" \
+              --check-delete-scope \
+              --format json
+          fi
+          args=(
+            registry delete-dockerhub-tags
+            --tag-list "${DOCKERHUB_TAGS}"
+            --required-substring alpha
+          )
+          if [[ -n "${DOCKERHUB_IMAGE}" ]]; then
+            args+=(--image "${DOCKERHUB_IMAGE}")
+          else
+            if [[ -z "${TARGET_REPO}" ]]; then
+              echo "repo or dockerhub_image is required for Docker Hub cleanup." >&2
+              exit 1
+            fi
+            args+=(--repo "${TARGET_REPO}" --component "${cleanup_component}")
+          fi
+          if [[ "${DRY_RUN}" == "true" ]]; then
+            args+=(--dry-run)
+          fi
+          python -m aio_fleet "${args[@]}"
+
+      - name: Poll active repos
+        id: poll
+        if: ${{ github.event.schedule == '17 * * * *' || inputs.mode == 'poll' }}
+        env:
+          CREATE_CHECKS: ${{ github.event_name == 'workflow_dispatch' && inputs.create_checks || false }}
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}
+          RUN_CHECKS: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && !inputs.dry_run) }}
+          APP_TOKEN: ${{ steps.app-token.outputs.token }}
+          AIO_FLEET_CHECK_TOKEN: ${{ steps.app-token.outputs.token }}
+        #checkov:skip=CKV_SECRET_6:the script handles a masked runtime GitHub App token for checkout auth
+        run: |
+          set -euo pipefail
+          args=(poll --format json)
+          if [[ "${RUN_CHECKS}" == "true" ]]; then
+            args+=(--missing-checks-only)
+          fi
+          if [[ "${CREATE_CHECKS}" == "true" && "${RUN_CHECKS}" != "true" ]]; then
+            args+=(--create-checks)
+          fi
+          if [[ "${DRY_RUN}" == "true" ]]; then
+            args+=(--dry-run)
+          fi
+          python -m aio_fleet "${args[@]}" | tee poll-targets.json
+          poll_args=(workflow poll-outputs --input poll-targets.json --github-output "${GITHUB_OUTPUT}")
+          if [[ "${RUN_CHECKS}" == "true" ]]; then
+            poll_args+=(--run-checks)
+          fi
+          python -m aio_fleet "${poll_args[@]}"
+          python - <<'PY' >> "${GITHUB_OUTPUT}"
+          import json
+
+          with open("poll-targets.json", encoding="utf-8") as handle:
+              payload = json.load(handle)
+          targets = payload.get("targets", [])
+          targets = targets if isinstance(targets, list) else []
+          publish_targets = [
+              target
+              for target in targets
+              if isinstance(target, dict) and target.get("publish") is True
+          ]
+          print(f"has_publish_targets={'true' if publish_targets else 'false'}")
+          print("publish_targets<<__AIO_FLEET_PUBLISH_TARGETS__")
+          print(json.dumps(publish_targets, sort_keys=True))
+          print("__AIO_FLEET_PUBLISH_TARGETS__")
+          PY
+
+      - name: Checkout upstream monitor repos
+        if: ${{ github.event.schedule == '43 10 * * *' || (github.event_name == 'workflow_dispatch' && inputs.mode == 'upstream-monitor') || steps.dashboard-controls.outputs.upstream_monitor == 'true' }}
+        env:
+          AIO_FLEET_WORKFLOW_TOKEN: ${{ steps.app-token.outputs.token }}
+        #checkov:skip=CKV_SECRET_6:the script handles a masked runtime GitHub App token for checkout auth
+        run: |
+          set -euo pipefail
+          if [[ -z "${AIO_FLEET_WORKFLOW_TOKEN}" ]]; then
+            echo "Unable to resolve a GitHub App token for upstream monitoring" >&2
+            exit 1
+          fi
+          handoff="${RUNNER_TEMP}/upstream-monitor"
+          mkdir -p "${handoff}"
+          python -m aio_fleet workflow checkout-upstream \
+            --checkout-root "${handoff}/checkouts" \
+            --output-manifest "${handoff}/manifest.yml" \
+            --output "${handoff}/checkout-report.json"
+
+      - name: Monitor upstream releases
+        if: ${{ github.event.schedule == '43 10 * * *' || (github.event_name == 'workflow_dispatch' && inputs.mode == 'upstream-monitor') || steps.dashboard-controls.outputs.upstream_monitor == 'true' }}
+        env:
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}
+          MUTATE: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && !inputs.dry_run) || steps.dashboard-controls.outputs.upstream_monitor == 'true' }}
+        run: |
+          set -euo pipefail
+          handoff="${RUNNER_TEMP}/upstream-monitor"
+          monitor_home="$(mktemp -d "${RUNNER_TEMP}/upstream-monitor-home.XXXXXX")"
+          args=(workflow upstream-monitor --manifest "${handoff}/manifest.yml" --output "${handoff}/report.json")
+          if [[ "${MUTATE}" == "true" ]]; then
+            args+=(--mutate)
+          fi
+          if [[ "${DRY_RUN}" == "true" ]]; then
+            args+=(--dry-run)
+          fi
+          env -i \
+            HOME="${monitor_home}" \
+            PATH="${PATH}" \
+            python -m aio_fleet "${args[@]}"
+
+      - name: Restore trusted aio-fleet after upstream monitor
+        if: ${{ always() && (github.event.schedule == '43 10 * * *' || (github.event_name == 'workflow_dispatch' && inputs.mode == 'upstream-monitor') || steps.dashboard-controls.outputs.upstream_monitor == 'true') }}
+        env:
+          PYTHONNOUSERSITE: "1"
+        run: |
+          set -euo pipefail
+          git reset --hard HEAD
+          git clean -ffdx
+          python -m pip install --force-reinstall .
+
+      - name: Validate upstream monitor handoff
+        if: ${{ github.event.schedule == '43 10 * * *' || (github.event_name == 'workflow_dispatch' && inputs.mode == 'upstream-monitor') || steps.dashboard-controls.outputs.upstream_monitor == 'true' }}
+        env:
+          PYTHONNOUSERSITE: "1"
+        run: |
+          set -euo pipefail
+          handoff="${RUNNER_TEMP}/upstream-monitor"
+          python -m aio_fleet workflow upstream-validate \
+            --manifest fleet.yml \
+            --checkout-root "${handoff}/checkouts" \
+            --input "${handoff}/report.json" \
+            --output "${handoff}/validated-report.json"
+
+      - name: Apply upstream monitor actions
+        if: ${{ github.event.schedule == '43 10 * * *' || (github.event_name == 'workflow_dispatch' && inputs.mode == 'upstream-monitor' && !inputs.dry_run) || steps.dashboard-controls.outputs.upstream_monitor == 'true' }}
+        env:
+          AIO_FLEET_WORKFLOW_TOKEN: ${{ steps.app-token.outputs.token }}
+          AIO_FLEET_CHECK_TOKEN: ${{ steps.app-token.outputs.token }}
+          PYTHONNOUSERSITE: "1"
+        #checkov:skip=CKV_SECRET_6:the script handles a masked runtime GitHub App token after tokenless generator monitoring completes
+        run: |
+          set -euo pipefail
+          handoff="${RUNNER_TEMP}/upstream-monitor"
+          python -m aio_fleet workflow upstream-actions \
+            --manifest fleet.yml \
+            --checkout-root "${handoff}/checkouts" \
+            --input "${handoff}/validated-report.json" \
+            --output "${handoff}/report.with-actions.json"
+          cp "${handoff}/report.with-actions.json" upstream-report.json
+
+      - name: Queue upstream PR validation targets
+        id: upstream-poll-targets
+        # Validate the bot PRs this run just opened in the same control-plane run
+        # (via the poll-checks job) instead of waiting for the best-effort hourly
+        # poll cron. Only the monitor's own trusted, signed PRs are emitted and
+        # every target is publish-disabled, so the registry-publish gate is never
+        # reached automatically. See docs/release-model.md.
+        if: ${{ github.event.schedule == '43 10 * * *' || (github.event_name == 'workflow_dispatch' && inputs.mode == 'upstream-monitor' && !inputs.dry_run) || steps.dashboard-controls.outputs.upstream_monitor == 'true' }}
+        run: |
+          set -euo pipefail
+          if [[ -f upstream-report.json ]]; then
+            python -m aio_fleet workflow upstream-poll-targets \
+              --manifest fleet.yml \
+              --input upstream-report.json \
+              --github-output "${GITHUB_OUTPUT}"
+          else
+            echo "no upstream-report.json; no freshly-opened upstream PRs to validate"
+          fi
+
+      - name: Checkout app repo for release prepare
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'release-prepare' }}
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: wgross19/${{ inputs.repo }}
+          ref: main
+          path: release-prepare/app-repo
+          fetch-depth: 0
+          token: ${{ steps.app-token.outputs.token }}
+          persist-credentials: false
+
+      - name: Generate release changelog
+        id: release-prepare
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'release-prepare' }}
+        env:
+          TARGET_REPO: ${{ inputs.repo }}
+          PUBLISH_COMPONENT: ${{ inputs.publish_component }}
+        run: |
+          set -euo pipefail
+          # release prepare shells out to `git cliff`; install the git-cliff
+          # binary (PyPI wheel) so it is on PATH for git to resolve.
+          python -m pip install --quiet "git-cliff>=2,<3"
+          args=(release prepare --repo "${TARGET_REPO}" --repo-path release-prepare/app-repo)
+          if [[ -n "${PUBLISH_COMPONENT}" ]]; then
+            args+=(--component "${PUBLISH_COMPONENT}")
+          fi
+          # The CLI emits the authoritative prepared version (component-aware) to
+          # GITHUB_OUTPUT; do not grep CHANGELOG.md, which is wrong for component
+          # lanes (e.g. the alpha lane's CHANGELOG.alpha.md).
+          args+=(--github-output "${GITHUB_OUTPUT}")
+          python -m aio_fleet "${args[@]}"
+          if [[ -n "$(git -C release-prepare/app-repo status --porcelain)" ]]; then
+            printf 'changed=true\n' >> "${GITHUB_OUTPUT}"
+          else
+            printf 'changed=false\n' >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: Open release PR
+        id: release-pr
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'release-prepare' && steps.release-prepare.outputs.changed == 'true' && !inputs.dry_run }}
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          # Create a GitHub-signed (verified) commit via the API so the release
+          # PR satisfies the app repos' required-signatures branch protection and
+          # can merge without an operator admin bypass.
+          sign-commits: true
+          path: release-prepare/app-repo
+          base: main
+          branch: release/${{ steps.release-prepare.outputs.version }}
+          commit-message: "chore(release): ${{ steps.release-prepare.outputs.version }}"
+          title: "chore(release): ${{ steps.release-prepare.outputs.version }}"
+          body: |
+            Formal release of `${{ inputs.repo }}` ${{ steps.release-prepare.outputs.version }}.
+
+            Merge this to land the changelog on `main`, then dispatch a publish
+            (`mode=control-check`, `event=push`, `publish=true`) to create the
+            registry tags, GitHub Release, and catalog sync.
+
+      - name: Enable auto-merge on the release PR
+        # The release PR is bot-generated, signed, and validated in this run, so
+        # let it merge itself once `aio-fleet / required` passes instead of
+        # waiting on a manual merge. continue-on-error keeps this non-regressive:
+        # if auto-merge is unavailable the operator merges manually as before.
+        # This does NOT auto-publish — the protected registry-publish gate still
+        # requires a publish dispatch + deployment approval.
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'release-prepare' && steps.release-pr.outputs.pull-request-number != '' }}
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          # Pass the dispatch input + PR number through the environment so the
+          # shell receives them as data, never as command text (avoids
+          # workflow_dispatch script injection into this merge-capable step).
+          PR_NUMBER: ${{ steps.release-pr.outputs.pull-request-number }}
+          REPO: ${{ inputs.repo }}
+        run: |
+          set -euo pipefail
+          gh pr merge "${PR_NUMBER}" \
+            --repo "wgross19/${REPO}" --squash --auto
+
+      - name: Queue release PR validation targets
+        id: release-poll-targets
+        # Reuse the upstream-poll-targets machinery so the release PR validates in
+        # this run (publish-disabled target) instead of waiting on the poll cron.
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'release-prepare' && steps.release-pr.outputs.pull-request-number != '' }}
+        env:
+          TARGET_REPO: ${{ inputs.repo }}
+          RELEASE_BRANCH: release/${{ steps.release-prepare.outputs.version }}
+          RELEASE_PR_SHA: ${{ steps.release-pr.outputs.pull-request-head-sha }}
+        run: |
+          set -euo pipefail
+          python - <<'PY' > release-prepare-report.json
+          import json
+          import os
+
+          print(
+              json.dumps(
+                  {
+                      "repos": [
+                          {
+                              "repo": os.environ["TARGET_REPO"],
+                              "action": "upserted-pr",
+                              "sha": os.environ["RELEASE_PR_SHA"],
+                              "branch": os.environ["RELEASE_BRANCH"],
+                          }
+                      ]
+                  }
+              )
+          )
+          PY
+          python -m aio_fleet workflow upstream-poll-targets \
+            --manifest fleet.yml \
+            --input release-prepare-report.json \
+            --github-output "${GITHUB_OUTPUT}"
+
+      - name: Publish upstream summary
+        if: ${{ always() && (github.event.schedule == '43 10 * * *' || inputs.mode == 'upstream-monitor') }}
+        run: |
+          set -euo pipefail
+          if [[ ! -f upstream-report.json && -f "${RUNNER_TEMP}/upstream-monitor/report.json" ]]; then
+            cp "${RUNNER_TEMP}/upstream-monitor/report.json" upstream-report.json
+          fi
+          python -m aio_fleet workflow upstream-summary \
+            --input upstream-report.json \
+            --output upstream-summary.md
+
+      - name: Checkout dashboard repos
+        if: ${{ always() && (github.event.schedule == '43 10 * * *' || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'upstream-monitor' || inputs.mode == 'fleet-dashboard' || inputs.mode == 'standards-reconcile')) || steps.dashboard-controls.outputs.rescan == 'true' || steps.dashboard-controls.outputs.upstream_monitor == 'true') }}
+        env:
+          AIO_FLEET_WORKFLOW_TOKEN: ${{ steps.app-token.outputs.token }}
+        #checkov:skip=CKV_SECRET_6:the script handles a masked runtime GitHub App token for dashboard checkout auth
+        run: |
+          set -euo pipefail
+          python -m aio_fleet workflow checkout-dashboard \
+            --checkout-root dashboard-checkouts \
+            --output-manifest fleet-dashboard.manifest.yml
+
+      - name: Update fleet dashboard issue
+        if: ${{ always() && (github.event.schedule == '43 10 * * *' || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'upstream-monitor' || inputs.mode == 'fleet-dashboard')) || steps.dashboard-controls.outputs.rescan == 'true' || steps.dashboard-controls.outputs.upstream_monitor == 'true') }}
+        env:
+          AIO_FLEET_DASHBOARD_TOKEN: ${{ steps.app-token.outputs.token }}
+          AIO_FLEET_UPSTREAM_TOKEN: ${{ steps.app-token.outputs.token }}
+          AIO_FLEET_ISSUE_TOKEN: ${{ github.token }}
+          AIO_FLEET_KUMA_PUSH_URL: ${{ secrets.AIO_FLEET_KUMA_PUSH_URL }}
+          AIO_FLEET_ALERT_WEBHOOK_URL: ${{ secrets.AIO_FLEET_ALERT_WEBHOOK_URL }}
+          MUTATE: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && !inputs.dry_run) || steps.dashboard-controls.outputs.rescan == 'true' || steps.dashboard-controls.outputs.upstream_monitor == 'true' }}
+        run: |
+          set -euo pipefail
+          args=(fleet-dashboard update --format json)
+          if [[ -f fleet-dashboard.manifest.yml ]]; then
+            args=(--manifest fleet-dashboard.manifest.yml "${args[@]}")
+          fi
+          args+=(--registry)
+          if [[ "${MUTATE}" == "true" ]]; then
+            args+=(--write)
+          else
+            args+=(--dry-run)
+          fi
+          python -m aio_fleet "${args[@]}" \
+            > >(tee fleet-dashboard-report.json) \
+            2> >(tee fleet-dashboard.err >&2)
+
+      - name: Generate release plan report
+        if: ${{ always() && (github.event.schedule == '43 10 * * *' || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'upstream-monitor' || inputs.mode == 'fleet-dashboard')) || steps.dashboard-controls.outputs.rescan == 'true' || steps.dashboard-controls.outputs.upstream_monitor == 'true') }}
+        run: |
+          set -euo pipefail
+          if [[ ! -f fleet-dashboard.manifest.yml ]]; then
+            printf '{"repos":[],"summary":{"repos":0,"release_due":0,"publish_missing":0}}\n' \
+              | tee release-plan-report.json
+            exit 0
+          fi
+          args=(release plan --all --registry --registry-verify-attempts 1 --format json)
+          args=(--manifest fleet-dashboard.manifest.yml "${args[@]}")
+          set +e
+          python -m aio_fleet "${args[@]}" | tee release-plan-report.json
+          status="${PIPESTATUS[0]}"
+          set -e
+          if [[ "${status}" != "0" ]]; then
+            echo "release plan found publish-missing packages; continuing so the transaction queue is still generated" >&2
+          fi
+          exit 0
+
+      - name: Generate release transaction queue report
+        if: ${{ always() && (github.event.schedule == '43 10 * * *' || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'upstream-monitor' || inputs.mode == 'fleet-dashboard')) || steps.dashboard-controls.outputs.rescan == 'true' || steps.dashboard-controls.outputs.upstream_monitor == 'true') }}
+        run: |
+          set -euo pipefail
+          if [[ ! -f release-plan-report.json ]]; then
+            printf '{"status":"ok","actions":[],"summary":{"actions":0,"publish":0,"source_pr":0,"catalog_sync":0}}\n' \
+              | tee release-transaction-report.json
+            exit 0
+          fi
+          python -m aio_fleet release reconcile \
+            --input release-plan-report.json \
+            --format json \
+            | tee release-transaction-report.json
+
+      - name: Reconcile standards drift
+        if: ${{ always() && (github.event.schedule == '43 10 * * *' || (github.event_name == 'workflow_dispatch' && inputs.mode == 'standards-reconcile') || steps.dashboard-controls.outputs.rescan == 'true') }}
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          AIO_FLEET_CHECK_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          set -euo pipefail
+          if [[ ! -f fleet-dashboard.manifest.yml ]]; then
+            printf '{"status":"ok","actions":[],"applied":[],"summary":{"repos":0,"actions":0,"actionable":0,"applied":0,"by_kind":{},"by_class":{}}}\n' \
+              | tee standards-reconcile-report.json
+            exit 0
+          fi
+          args=(standards reconcile --github --release --format json --allow-drift)
+          args=(--manifest fleet-dashboard.manifest.yml "${args[@]}")
+          python -m aio_fleet "${args[@]}" | tee standards-reconcile-report.json
+
+      - name: Checkout catalog for changelog
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'catalog-changelog' }}
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: wgross19/awesome-unraid
+          token: ${{ steps.app-token.outputs.token }}
+          path: catalog-changelog/awesome-unraid
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Generate catalog changelog
+        id: catalog-changelog
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'catalog-changelog' }}
+        run: |
+          set -euo pipefail
+          python -m aio_fleet catalog-changelog \
+            --catalog-path catalog-changelog/awesome-unraid \
+            --write
+          if [[ -z "$(git -C catalog-changelog/awesome-unraid status --porcelain -- CHANGELOG.md)" ]]; then
+            echo "changed=false" >> "${GITHUB_OUTPUT}"
+          else
+            echo "changed=true" >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: Create catalog changelog PR
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'catalog-changelog' && steps.catalog-changelog.outputs.changed == 'true' && !inputs.dry_run }}
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          path: catalog-changelog/awesome-unraid
+          add-paths: CHANGELOG.md
+          commit-message: "chore(changelog): update catalog history"
+          title: "chore(changelog): update catalog history"
+          body: |
+            This PR refreshes `CHANGELOG.md` for the current catalog history.
+
+            ## Summary
+            - regenerates the catalog changelog with `aio-fleet`
+            - does not create tags or GitHub Releases
+
+            ## Validation
+            - `python -m aio_fleet catalog-changelog --catalog-path . --write`
+          branch: "changelog/update-catalog-history"
+          delete-branch: true
+          sign-commits: true
+
+      - name: Alert upstream monitor
+        if: ${{ always() && (github.event.schedule == '43 10 * * *' || inputs.mode == 'upstream-monitor') }}
+        env:
+          AIO_FLEET_KUMA_PUSH_URL: ${{ secrets.AIO_FLEET_KUMA_PUSH_URL }}
+          AIO_FLEET_ALERT_WEBHOOK_URL: ${{ secrets.AIO_FLEET_ALERT_WEBHOOK_URL }}
+          DETAILS_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set +e
+          if [[ -f upstream-report.json ]]; then
+            python -m aio_fleet alert send \
+              --event upstream-monitor \
+              --report-json upstream-report.json \
+              --details-url "${DETAILS_URL}" \
+              --format json
+          else
+            python -m aio_fleet alert send \
+              --event upstream-monitor \
+              --status failure \
+              --summary "Upstream monitor did not produce a report" \
+              --details-url "${DETAILS_URL}" \
+              --format json
+          fi
+          exit 0
+
+      - name: Validate control-check inputs
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'control-check' }}
+        env:
+          TARGET_REPO: ${{ inputs.repo }}
+          TARGET_SHA: ${{ inputs.sha }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${TARGET_REPO}" || -z "${TARGET_SHA}" ]]; then
+            echo "repo and sha are required for control-check mode" >&2
+            exit 1
+          fi
+
+      - name: Resolve control-check checkout policy
+        id: control-check-policy
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'control-check' }}
+        env:
+          TARGET_REPO: ${{ inputs.repo }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import os
+          from pathlib import Path
+
+          from aio_fleet.manifest import load_manifest
+
+          repo = load_manifest(Path("fleet.yml")).repo(os.environ["TARGET_REPO"])
+          checkout_submodules = str(bool(repo.raw.get("checkout_submodules"))).lower()
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as handle:
+              handle.write(f"checkout_submodules={checkout_submodules}\n")
+          PY
+
+      - name: Start central control check
+        id: start-central-control-check
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'control-check' && !inputs.dry_run }}
+        continue-on-error: true
+        env:
+          TARGET_REPO: ${{ inputs.repo }}
+          TARGET_SHA: ${{ inputs.sha }}
+          TARGET_SOURCE: workflow_dispatch
+          TARGET_EVENT: ${{ inputs.event }}
+          PUBLISH: ${{ inputs.publish }}
+          PUBLISH_COMPONENT: ${{ inputs.publish_component }}
+          AIO_FLEET_CHECK_TOKEN: ${{ steps.app-token.outputs.token }}
+          CONTROL_REPORT: ${{ runner.temp }}/central-control-report.json
+        run: |
+          set +e
+          output="$(
+            python -m aio_fleet check run \
+              --repo "${TARGET_REPO}" \
+              --sha "${TARGET_SHA}" \
+              --event "${TARGET_EVENT}" \
+              --status in_progress \
+              --summary "aio-fleet central check started" 2>&1
+          )"
+          status=$?
+          if [[ ${status} -ne 0 ]]; then
+            args=(
+              workflow control-report
+              --repo "${TARGET_REPO}"
+              --sha "${TARGET_SHA}"
+              --event "${TARGET_EVENT}"
+              --source "${TARGET_SOURCE}"
+              --status failure
+              --failure "app-check-permission: bootstrap check-run failed: ${output}"
+              --output "${CONTROL_REPORT}"
+              --format json
+            )
+            if [[ "${PUBLISH}" == "true" ]]; then
+              args+=(--publish)
+            fi
+            if [[ -n "${PUBLISH_COMPONENT}" ]]; then
+              args+=(--publish-component "${PUBLISH_COMPONENT}")
+            fi
+            python -m aio_fleet "${args[@]}"
+            echo "${output}" >&2
+            exit "${status}"
+          fi
+          echo "${output}"
+
+      - name: Checkout app repo
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'control-check' && (inputs.dry_run || steps.start-central-control-check.outcome == 'success') }}
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: wgross19/${{ inputs.repo }}
+          ref: ${{ inputs.sha }}
+          path: app-repo
+          fetch-depth: 0
+          submodules: ${{ inputs.event != 'pull_request' && steps.control-check-policy.outputs.checkout_submodules == 'true' && 'recursive' || 'false' }}
+          token: ${{ steps.app-token.outputs.token }}
+          persist-credentials: false
+
+      - name: Initialize trusted PR submodules
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'control-check' && inputs.event == 'pull_request' && steps.control-check-policy.outputs.checkout_submodules == 'true' && (inputs.dry_run || steps.start-central-control-check.outcome == 'success') }}
+        env:
+          TARGET_REPO: ${{ inputs.repo }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import os
+          import subprocess
+          from pathlib import Path
+
+          from aio_fleet.manifest import load_manifest
+
+          def run(args: list[str]) -> None:
+              subprocess.run(args, check=True)
+
+          def output(args: list[str]) -> str:
+              return subprocess.check_output(args, text=True).strip()
+
+          repo = load_manifest(Path("fleet.yml")).repo(os.environ["TARGET_REPO"])
+          app_repo = Path("app-repo")
+          trusted = 0
+          for config in repo.raw.get("upstream_monitor") or []:
+              if not isinstance(config, dict):
+                  continue
+              path = str(config.get("submodule_path") or "").strip()
+              upstream_repo = str(config.get("repo") or "").strip()
+              if not path:
+                  continue
+              submodule_path = Path(path)
+              if submodule_path.is_absolute() or ".." in submodule_path.parts:
+                  raise SystemExit(f"{repo.name}: unsafe submodule path: {path}")
+              if not upstream_repo:
+                  raise SystemExit(f"{repo.name}: missing trusted repo for {path}")
+              allowed_urls = {
+                  f"https://github.com/{upstream_repo}",
+                  f"https://github.com/{upstream_repo}.git",
+              }
+              matches = output(
+                  [
+                      "git",
+                      "-C",
+                      str(app_repo),
+                      "config",
+                      "-z",
+                      "-f",
+                      ".gitmodules",
+                      "--get-regexp",
+                      r"^submodule\..*\.path$",
+                  ]
+              ).split("\0")
+              section_names = []
+              for record in matches:
+                  if not record:
+                      continue
+                  key, sep, value = record.partition("\n")
+                  if not sep:
+                      raise SystemExit(
+                          f"{repo.name}: malformed .gitmodules path record: {record}"
+                      )
+                  key = key.strip()
+                  value = value.strip()
+                  if value != path:
+                      continue
+                  section_names.append(key.removeprefix("submodule.").removesuffix(".path"))
+              if len(section_names) != 1:
+                  raise SystemExit(
+                      f"{repo.name}: expected exactly one .gitmodules section for {path}, "
+                      f"found {len(section_names)}"
+                  )
+              section_name = section_names[0]
+              actual_url = output(
+                  [
+                      "git",
+                      "-C",
+                      str(app_repo),
+                      "config",
+                      "-f",
+                      ".gitmodules",
+                      "--get",
+                      f"submodule.{section_name}.url",
+                  ]
+              )
+              if actual_url not in allowed_urls:
+                  raise SystemExit(
+                      f"{repo.name}: untrusted submodule url for {path}: {actual_url}"
+                  )
+              tree = output(["git", "-C", str(app_repo), "ls-tree", "HEAD", path])
+              parts = tree.split()
+              if len(parts) < 3 or parts[1] != "commit":
+                  raise SystemExit(f"{repo.name}: {path} is not a gitlink")
+              expected_sha = parts[2]
+              trusted_url = f"https://github.com/{upstream_repo}.git"
+              run(["git", "-C", str(app_repo), "submodule", "init", "--", path])
+              run(
+                  [
+                      "git",
+                      "-C",
+                      str(app_repo),
+                      "config",
+                      f"submodule.{section_name}.url",
+                      trusted_url,
+                  ]
+              )
+              run(
+                  [
+                      "git",
+                      "-C",
+                      str(app_repo),
+                      "-c",
+                      "credential.helper=",
+                      "-c",
+                      "http.extraHeader=",
+                      "submodule",
+                      "update",
+                      "--init",
+                      "--depth=1",
+                      "--",
+                      path,
+                  ]
+              )
+              actual_sha = output(
+                  ["git", "-C", str(app_repo / path), "rev-parse", "HEAD"]
+              )
+              if actual_sha != expected_sha:
+                  raise SystemExit(
+                      f"{repo.name}: {path} checked out {actual_sha}, "
+                      f"expected {expected_sha}"
+                  )
+              trusted += 1
+          if trusted == 0:
+              raise SystemExit(f"{repo.name}: no trusted submodules configured")
+          PY
+
+      - name: Run central control check
+        id: central-control-check
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'control-check' && (inputs.dry_run || steps.start-central-control-check.outcome == 'success') }}
+        continue-on-error: true
+        env:
+          TARGET_REPO: ${{ inputs.repo }}
+          TARGET_SHA: ${{ inputs.sha }}
+          TARGET_SOURCE: workflow_dispatch
+          TARGET_EVENT: ${{ inputs.event }}
+          PUBLISH: ${{ inputs.publish }}
+          PUBLISH_COMPONENT: ${{ inputs.publish_component }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          CONTROL_REPORT: ${{ runner.temp }}/central-control-report.json
+        run: |
+          set -euo pipefail
+          unset GITHUB_ENV GITHUB_OUTPUT GITHUB_PATH GITHUB_STEP_SUMMARY
+          args=(
+            control-check
+            --repo "${TARGET_REPO}"
+            --repo-path app-repo
+            --sha "${TARGET_SHA}"
+            --source "${TARGET_SOURCE}"
+            --event "${TARGET_EVENT}"
+          )
+          if [[ "${PUBLISH}" == "true" ]]; then
+            args+=(--publish --validation-only --no-github-prereleases)
+          fi
+          if [[ -n "${PUBLISH_COMPONENT}" ]]; then
+            args+=(--publish-component "${PUBLISH_COMPONENT}")
+          fi
+          if [[ "${DRY_RUN}" == "true" ]]; then
+            args+=(--check-run --dry-run)
+          fi
+          args+=(--report-json "${CONTROL_REPORT}")
+          python -m aio_fleet "${args[@]}" 2>&1 | tee central-control-check.log
+
+      - name: Restore trusted aio-fleet checkout
+        if: ${{ always() && github.event_name == 'workflow_dispatch' && inputs.mode == 'control-check' && !inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          git reset --hard HEAD
+          git clean -ffd -e app-repo/
+          python -m pip install --force-reinstall .
+
+      - name: Complete central control check
+        if: ${{ always() && github.event_name == 'workflow_dispatch' && inputs.mode == 'control-check' && !inputs.dry_run && steps.start-central-control-check.outcome == 'success' && (!inputs.publish || steps.central-control-check.outcome != 'success') }}
+        env:
+          TARGET_REPO: ${{ inputs.repo }}
+          TARGET_SHA: ${{ inputs.sha }}
+          TARGET_EVENT: ${{ inputs.event }}
+          CHECK_OUTCOME: ${{ steps.central-control-check.outcome }}
+          AIO_FLEET_CHECK_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          set -euo pipefail
+          conclusion=success
+          summary="aio-fleet central check passed"
+          if [[ "${CHECK_OUTCOME}" != "success" ]]; then
+            conclusion=failure
+            summary="aio-fleet central check failed"
+          fi
+          python -I -m aio_fleet check run \
+            --repo "${TARGET_REPO}" \
+            --sha "${TARGET_SHA}" \
+            --event "${TARGET_EVENT}" \
+            --status completed \
+            --conclusion "${conclusion}" \
+            --summary "${summary}"
+          if [[ "${CHECK_OUTCOME}" != "success" ]]; then
+            exit 1
+          fi
+
+      - name: Summarize registry publish approval
+        if: ${{ always() && github.event_name == 'workflow_dispatch' && inputs.mode == 'control-check' && inputs.publish && !inputs.dry_run && steps.central-control-check.outcome == 'success' }}
+        env:
+          TARGET_REPO: ${{ inputs.repo }}
+          TARGET_SHA: ${{ inputs.sha }}
+          PUBLISH_COMPONENT: ${{ inputs.publish_component }}
+        run: |
+          set -euo pipefail
+          component="${PUBLISH_COMPONENT:-all}"
+          {
+            echo "## Registry publish approval"
+            echo
+            echo "- Repo: \`${TARGET_REPO}\`"
+            echo "- Component: \`${component}\`"
+            echo "- SHA: \`${TARGET_SHA}\`"
+            echo "- Environment: \`registry-publish\`"
+            echo
+            echo "Approve only if this matches the intended package and release."
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Fail central control check bootstrap
+        if: ${{ always() && github.event_name == 'workflow_dispatch' && inputs.mode == 'control-check' && !inputs.dry_run && steps.start-central-control-check.outcome == 'failure' }}
+        run: |
+          set -euo pipefail
+          echo "central control check bootstrap failed before app checkout" >&2
+          exit 1
+
+      - name: Alert control-plane status
+        if: ${{ always() }}
+        env:
+          AIO_FLEET_KUMA_PUSH_URL: ${{ secrets.AIO_FLEET_KUMA_PUSH_URL }}
+          AIO_FLEET_ALERT_WEBHOOK_URL: ${{ secrets.AIO_FLEET_ALERT_WEBHOOK_URL }}
+          DETAILS_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          JOB_STATUS: ${{ job.status }}
+          MODE: ${{ inputs.mode }}
+        run: |
+          set +e
+          mode="${MODE:-${GITHUB_EVENT_NAME}}"
+          python -m aio_fleet alert send \
+            --event control-plane \
+            --status "${JOB_STATUS}" \
+            --summary "AIO Fleet Control Plane ${mode} ${JOB_STATUS}" \
+            --failure-file fleet-dashboard.err \
+            --details-url "${DETAILS_URL}" \
+            --format json
+          exit 0
+
+      - name: Upload control-plane artifacts
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: control-plane-reports-${{ github.run_id }}
+          if-no-files-found: ignore
+          retention-days: 14
+          path: |
+            poll-targets.json
+            upstream-report.json
+            upstream-summary.md
+            fleet-dashboard-report.json
+            release-plan-report.json
+            release-transaction-report.json
+            standards-reconcile-report.json
+            ${{ runner.temp }}/central-control-report.json
+
+  manual-registry-publish:
+    name: manual-registry-publish (${{ inputs.repo }} / ${{ inputs.publish_component || 'all' }} / ${{ inputs.sha }})
+    # Kept inline with poll-registry-publish because both jobs must bind their
+    # own protected registry-publish environment and job-scoped package writer.
+    needs: control-plane
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'control-check' && inputs.publish && !inputs.dry_run && needs.control-plane.outputs.manual_control_check_outcome == 'success' }}
+    runs-on: ubuntu-latest
+    environment:
+      name: registry-publish
+      url: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    permissions:
+      contents: read # checkout trusted fleet code and the reviewed app ref
+      checks: write # complete the required aio-fleet check-run
+      packages: write # publish GHCR images from the protected registry environment
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+    steps:
+      - name: Checkout aio-fleet
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      # Do not cache in publish jobs; avoids release-path cache poisoning.
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.13"
+
+      - name: Install aio-fleet
+        run: |
+          set -euo pipefail
+          python -m pip install -e ".[dev]"
+
+      - name: Resolve GitHub App token
+        id: app-token
+        env:
+          AIO_FLEET_APP_CLIENT_ID: ${{ vars.AIO_FLEET_APP_CLIENT_ID }}
+          AIO_FLEET_APP_ID: ${{ secrets.AIO_FLEET_APP_ID }}
+          AIO_FLEET_APP_INSTALLATION_ID: ${{ secrets.AIO_FLEET_APP_INSTALLATION_ID }}
+          AIO_FLEET_APP_PRIVATE_KEY: ${{ secrets.AIO_FLEET_APP_PRIVATE_KEY }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          token="$(python -m aio_fleet.github_app --fallback-env GITHUB_TOKEN)"
+          if [[ -z "${token}" ]]; then
+            echo "Unable to resolve a GitHub token for app checkout" >&2
+            exit 1
+          fi
+          echo "::add-mask::${token}"
+          printf 'token=%s\n' "${token}" >> "${GITHUB_OUTPUT}"
+
+      - name: Prepare Docker auth config
+        run: |
+          set -euo pipefail
+          install -d -m 700 "${RUNNER_TEMP}/aio-fleet-docker-config"
+          printf 'DOCKER_CONFIG=%s\n' "${RUNNER_TEMP}/aio-fleet-docker-config" >> "${GITHUB_ENV}"
+
+      - name: Log in to Docker Hub
+        id: dockerhub-login
+        continue-on-error: true
+        env:
+          DOCKER_CONFIG: ${{ runner.temp }}/aio-fleet-docker-config
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_PUBLISH_TOKEN: ${{ secrets.DOCKERHUB_PUBLISH_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_PUBLISH_TOKEN}" ]]; then
+            echo "Docker Hub publish credentials are missing" >&2
+            exit 1
+          fi
+          echo "::add-mask::${DOCKERHUB_PUBLISH_TOKEN}"
+          printf '%s\n' "${DOCKERHUB_PUBLISH_TOKEN}" \
+            | docker login docker.io \
+                --username "${DOCKERHUB_USERNAME}" \
+                --password-stdin
+
+      - name: Log in to GHCR
+        id: ghcr-login
+        continue-on-error: true
+        env:
+          DOCKER_CONFIG: ${{ runner.temp }}/aio-fleet-docker-config
+          GHCR_USERNAME: ${{ github.repository_owner }}
+          GHCR_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${GHCR_TOKEN}" ]]; then
+            echo "GHCR publish token is missing" >&2
+            exit 1
+          fi
+          echo "::add-mask::${GHCR_TOKEN}"
+          printf '%s\n' "${GHCR_TOKEN}" \
+            | docker login ghcr.io \
+                --username "${GHCR_USERNAME}" \
+                --password-stdin
+
+      - name: Validate publish credentials
+        id: registry-preflight
+        continue-on-error: true
+        env:
+          TARGET_REPO: ${{ inputs.repo }}
+          TARGET_SHA: ${{ inputs.sha }}
+          TARGET_SOURCE: workflow_dispatch
+          TARGET_EVENT: ${{ inputs.event }}
+          PUBLISH_COMPONENT: ${{ inputs.publish_component }}
+          AIO_FLEET_REGISTRY_AUTH_MODE: preauthenticated
+          DOCKERHUB_LOGIN_OUTCOME: ${{ steps.dockerhub-login.outcome }}
+          GHCR_LOGIN_OUTCOME: ${{ steps.ghcr-login.outcome }}
+          CONTROL_REPORT: ${{ runner.temp }}/central-control-report.json
+        run: |
+          set +e
+          python -I -m aio_fleet registry preflight --mode publish --format json \
+            | tee registry-preflight-report.json
+          status=${PIPESTATUS[0]}
+          set -euo pipefail
+          if [[ "${DOCKERHUB_LOGIN_OUTCOME}" != "success" || "${GHCR_LOGIN_OUTCOME}" != "success" ]]; then
+            status=1
+          fi
+          if [[ ${status} -ne 0 ]]; then
+            args=(
+              workflow control-report
+              --repo "${TARGET_REPO}"
+              --sha "${TARGET_SHA}"
+              --event "${TARGET_EVENT}"
+              --source "${TARGET_SOURCE}"
+              --status failure
+              --publish
+              --failure "credential-gap: registry publish preflight failed"
+              --output "${CONTROL_REPORT}"
+              --format json
+            )
+            if [[ -n "${PUBLISH_COMPONENT}" ]]; then
+              args+=(--publish-component "${PUBLISH_COMPONENT}")
+            fi
+            python -m aio_fleet "${args[@]}"
+            exit "${status}"
+          fi
+
+      - name: Set up QEMU
+        if: ${{ steps.registry-preflight.outcome == 'success' }}
+        uses: docker/setup-qemu-action@ce360397dd3f832beb865e1373c09c0e9f86d70a # v4.0.0
+
+      - name: Set up Docker Buildx
+        if: ${{ steps.registry-preflight.outcome == 'success' }}
+        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
+
+      - name: Resolve control-check checkout policy
+        id: control-check-policy
+        if: ${{ steps.registry-preflight.outcome == 'success' }}
+        env:
+          TARGET_REPO: ${{ inputs.repo }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import os
+          from pathlib import Path
+
+          from aio_fleet.manifest import load_manifest
+
+          repo = load_manifest(Path("fleet.yml")).repo(os.environ["TARGET_REPO"])
+          checkout_submodules = str(bool(repo.raw.get("checkout_submodules"))).lower()
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as handle:
+              handle.write(f"checkout_submodules={checkout_submodules}\n")
+          PY
+
+      - name: Checkout app repo
+        if: ${{ steps.registry-preflight.outcome == 'success' }}
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: wgross19/${{ inputs.repo }}
+          ref: ${{ inputs.sha }}
+          path: app-repo
+          fetch-depth: 0
+          submodules: ${{ inputs.event != 'pull_request' && steps.control-check-policy.outputs.checkout_submodules == 'true' && 'recursive' || 'false' }}
+          token: ${{ steps.app-token.outputs.token }}
+          persist-credentials: false
+
+      - name: Reset app checkout before prerelease publish
+        if: ${{ steps.registry-preflight.outcome == 'success' }}
+        env:
+          TARGET_SHA: ${{ inputs.sha }}
+        run: |
+          set -euo pipefail
+          git -C app-repo reset --hard "${TARGET_SHA}"
+          git -C app-repo clean -ffd
+
+      - name: Publish registry images
+        id: registry-publish
+        if: ${{ steps.registry-preflight.outcome == 'success' }}
+        continue-on-error: true
+        uses: ./.github/actions/publish-registry-images
+        env:
+          AIO_FLEET_REGISTRY_AUTH_MODE: preauthenticated
+        with:
+          repo: ${{ inputs.repo }}
+          repo-path: app-repo
+          sha: ${{ inputs.sha }}
+          source: workflow_dispatch
+          event: ${{ inputs.event }}
+          publish-component: ${{ inputs.publish_component }}
+          control-report: ${{ runner.temp }}/central-control-report.json
+
+      - name: Publish GitHub prereleases
+        id: github-prereleases
+        if: ${{ steps.registry-publish.outcome == 'success' }}
+        continue-on-error: true
+        env:
+          TARGET_REPO: ${{ inputs.repo }}
+          TARGET_SHA: ${{ inputs.sha }}
+          PUBLISH_COMPONENT: ${{ inputs.publish_component }}
+          AIO_FLEET_RELEASE_TOKEN: ${{ steps.app-token.outputs.token }}
+          CONTROL_REPORT: ${{ runner.temp }}/central-control-report.json
+        run: |
+          set -euo pipefail
+          args=(
+            release
+            publish-github-prereleases
+            --repo "${TARGET_REPO}"
+            --repo-path app-repo
+            --expected-sha "${TARGET_SHA}"
+            --control-report-json "${CONTROL_REPORT}"
+          )
+          if [[ -n "${PUBLISH_COMPONENT}" ]]; then
+            args+=(--component "${PUBLISH_COMPONENT}")
+          fi
+          python -I -m aio_fleet "${args[@]}"
+
+      - name: Publish GitHub release
+        id: github-release
+        if: ${{ steps.registry-publish.outcome == 'success' }}
+        continue-on-error: true
+        env:
+          TARGET_REPO: ${{ inputs.repo }}
+          PUBLISH_COMPONENT: ${{ inputs.publish_component }}
+          AIO_FLEET_RELEASE_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          set -euo pipefail
+          # Create the formal aio GitHub Release once its `chore(release): <ver>`
+          # changelog version is on main. Idempotent: release publish updates or
+          # skips an existing release, no-ops when no formal release is due, and
+          # github_prerelease components are handled by the prerelease step above.
+          python -I -m aio_fleet release publish \
+            --repo "${TARGET_REPO}" \
+            --repo-path app-repo \
+            --component "${PUBLISH_COMPONENT:-aio}"
+
+      - name: Checkout catalog for sync
+        id: catalog-checkout
+        if: ${{ steps.registry-publish.outcome == 'success' && !inputs.dry_run }}
+        continue-on-error: true
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: wgross19/awesome-unraid
+          ref: main
+          path: catalog-sync/awesome-unraid
+          fetch-depth: 0
+          token: ${{ steps.app-token.outputs.token }}
+          persist-credentials: false
+
+      - name: Sync catalog
+        id: catalog-sync
+        if: ${{ steps.registry-publish.outcome == 'success' && steps.catalog-checkout.outcome == 'success' && !inputs.dry_run }}
+        continue-on-error: true
+        env:
+          TARGET_REPO: ${{ inputs.repo }}
+        run: |
+          set -euo pipefail
+          # Sync the published Community Apps XML into awesome-unraid. No-ops when
+          # the catalog is already current.
+          python -m aio_fleet sync-catalog \
+            --repo "${TARGET_REPO}" \
+            --repo-path app-repo \
+            --catalog-path catalog-sync/awesome-unraid
+          if [[ -n "$(git -C catalog-sync/awesome-unraid status --porcelain)" ]]; then
+            printf 'changed=true\n' >> "${GITHUB_OUTPUT}"
+          else
+            printf 'changed=false\n' >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: Create catalog sync PR
+        if: ${{ steps.catalog-sync.outputs.changed == 'true' && !inputs.dry_run }}
+        continue-on-error: true
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          # GitHub-signed (verified) commit so the catalog PR satisfies
+          # awesome-unraid's required-signatures branch protection and merges
+          # without an operator admin bypass.
+          sign-commits: true
+          path: catalog-sync/awesome-unraid
+          base: main
+          branch: catalog/${{ inputs.repo }}-sync
+          commit-message: "catalog: sync ${{ inputs.repo }} release"
+          title: "catalog: sync ${{ inputs.repo }} release"
+          body: |
+            Automated Community Apps `<Changes>` sync for the latest
+            `${{ inputs.repo }}` formal release.
+
+      - name: Complete central control check
+        if: ${{ always() }}
+        env:
+          TARGET_REPO: ${{ inputs.repo }}
+          TARGET_SHA: ${{ inputs.sha }}
+          TARGET_EVENT: ${{ inputs.event }}
+          PREFLIGHT_OUTCOME: ${{ steps.registry-preflight.outcome }}
+          PUBLISH_OUTCOME: ${{ steps.registry-publish.outcome }}
+          RELEASE_OUTCOME: ${{ steps.github-prereleases.outcome }}
+          GITHUB_RELEASE_OUTCOME: ${{ steps.github-release.outcome }}
+          AIO_FLEET_CHECK_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          set -euo pipefail
+          conclusion=success
+          summary="aio-fleet central check passed"
+          if [[ "${PREFLIGHT_OUTCOME}" == "failure" ]]; then
+            conclusion=failure
+            summary="aio-fleet registry preflight failed"
+          elif [[ "${PUBLISH_OUTCOME}" == "failure" ]]; then
+            conclusion=failure
+            summary="aio-fleet registry publish failed"
+          elif [[ "${RELEASE_OUTCOME}" == "failure" ]]; then
+            conclusion=failure
+            summary="aio-fleet GitHub prerelease publish failed"
+          elif [[ "${GITHUB_RELEASE_OUTCOME}" == "failure" ]]; then
+            conclusion=failure
+            summary="aio-fleet GitHub release publish failed"
+          fi
+          python -I -m aio_fleet check run \
+            --repo "${TARGET_REPO}" \
+            --sha "${TARGET_SHA}" \
+            --event "${TARGET_EVENT}" \
+            --status completed \
+            --conclusion "${conclusion}" \
+            --summary "${summary}"
+          if [[ "${conclusion}" != "success" ]]; then
+            exit 1
+          fi
+
+      - name: Alert central publish status
+        if: ${{ always() }}
+        env:
+          AIO_FLEET_KUMA_PUSH_URL: ${{ secrets.AIO_FLEET_KUMA_PUSH_URL }}
+          AIO_FLEET_ALERT_WEBHOOK_URL: ${{ secrets.AIO_FLEET_ALERT_WEBHOOK_URL }}
+          DETAILS_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          CONTROL_REPORT: ${{ runner.temp }}/central-control-report.json
+        run: |
+          set +e
+          if [[ -f "${CONTROL_REPORT}" ]]; then
+            python -m aio_fleet alert send \
+              --event publish \
+              --report-json "${CONTROL_REPORT}" \
+              --details-url "${DETAILS_URL}" \
+              --format json
+          else
+            python -m aio_fleet alert send \
+              --event publish \
+              --status failure \
+              --summary "Central publish did not produce a report" \
+              --details-url "${DETAILS_URL}" \
+              --format json
+          fi
+          exit 0
+
+      - name: Upload manual publish artifacts
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: manual-registry-publish-${{ inputs.repo }}-${{ inputs.sha }}
+          if-no-files-found: ignore
+          retention-days: 14
+          path: |
+            registry-preflight-report.json
+            ${{ runner.temp }}/central-control-report.json
+
+  poll-checks:
+    name: poll-check (${{ matrix.target.repo }} / ${{ matrix.target.source }})
+    needs: control-plane
+    if: ${{ needs.control-plane.outputs.poll_run_checks == 'true' && needs.control-plane.outputs.poll_has_targets == 'true' }}
+    runs-on: ubuntu-latest
+    concurrency:
+      group: aio-fleet-check-${{ matrix.target.repo }}-${{ matrix.target.source }}-${{ matrix.target.sha }}
+      cancel-in-progress: false
+    strategy:
+      fail-fast: false
+      matrix:
+        target: ${{ fromJSON(needs.control-plane.outputs.poll_targets) }}
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+    steps:
+      - name: Checkout aio-fleet
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install aio-fleet
+        run: |
+          set -euo pipefail
+          python -m pip install -e ".[dev]"
+
+      - name: Resolve GitHub App token
+        id: app-token
+        env:
+          AIO_FLEET_APP_CLIENT_ID: ${{ vars.AIO_FLEET_APP_CLIENT_ID }}
+          AIO_FLEET_APP_ID: ${{ secrets.AIO_FLEET_APP_ID }}
+          AIO_FLEET_APP_INSTALLATION_ID: ${{ secrets.AIO_FLEET_APP_INSTALLATION_ID }}
+          AIO_FLEET_APP_PRIVATE_KEY: ${{ secrets.AIO_FLEET_APP_PRIVATE_KEY }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          token="$(python -m aio_fleet.github_app --fallback-env GITHUB_TOKEN)"
+          if [[ -z "${token}" ]]; then
+            echo "Unable to resolve a GitHub token for app checkout" >&2
+            exit 1
+          fi
+          echo "::add-mask::${token}"
+          printf 'token=%s\n' "${token}" >> "${GITHUB_OUTPUT}"
+
+      - name: Validate fast cleanup scope
+        id: fast-cleanup-scope
+        continue-on-error: true
+        env:
+          TARGET_REPO: ${{ matrix.target.repo }}
+          TARGET_SHA: ${{ matrix.target.sha }}
+          TARGET_SOURCE: ${{ matrix.target.source }}
+          TARGET_EVENT: ${{ matrix.target.event }}
+          TARGET_PUBLISH: ${{ matrix.target.publish }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          CONTROL_REPORT: ${{ runner.temp }}/poll-central-control-report.json
+        run: |
+          set -euo pipefail
+          args=(
+            control-check
+            --repo "${TARGET_REPO}"
+            --sha "${TARGET_SHA}"
+            --source "${TARGET_SOURCE}"
+            --event "${TARGET_EVENT}"
+            --resolve-changed-files
+            --fast-path-only
+            --report-json "${CONTROL_REPORT}"
+          )
+          if [[ "${TARGET_PUBLISH}" == "true" ]]; then
+            args+=(--publish)
+          fi
+          python -m aio_fleet "${args[@]}"
+
+      - name: Install Trunk
+        if: ${{ steps.fast-cleanup-scope.outcome != 'success' }}
+        uses: trunk-io/trunk-action/setup@75699af9e26881e564e9d832ef7dc3af25ec031b # v1
+
+      - name: Start central control check
+        id: start-poll-central-control-check
+        continue-on-error: true
+        env:
+          TARGET_REPO: ${{ matrix.target.repo }}
+          TARGET_SHA: ${{ matrix.target.sha }}
+          TARGET_SOURCE: ${{ matrix.target.source }}
+          TARGET_EVENT: ${{ matrix.target.event }}
+          TARGET_PUBLISH: ${{ matrix.target.publish }}
+          TARGET_PUBLISH_COMPONENTS: ${{ toJSON(matrix.target.publish_components) }}
+          TARGET_CHECK_MODE: ${{ matrix.target.check_mode }}
+          TARGET_CHANGED_PATHS: ${{ toJSON(matrix.target.changed_paths) }}
+          TARGET_CHANGED_FILES: ${{ toJSON(matrix.target.changed_files) }}
+          TARGET_FAST_PATH_REASON: ${{ matrix.target.fast_path_reason }}
+          AIO_FLEET_CHECK_TOKEN: ${{ steps.app-token.outputs.token }}
+          CONTROL_REPORT: ${{ runner.temp }}/poll-central-control-report.json
+        run: |
+          set +e
+          output="$(
+            python -m aio_fleet check run \
+              --repo "${TARGET_REPO}" \
+              --sha "${TARGET_SHA}" \
+              --event "${TARGET_EVENT}" \
+              --status in_progress \
+              --summary "aio-fleet central check started" 2>&1
+          )"
+          status=$?
+          if [[ ${status} -ne 0 ]]; then
+            args=(
+              workflow control-report
+              --repo "${TARGET_REPO}"
+              --sha "${TARGET_SHA}"
+              --event "${TARGET_EVENT}"
+              --source "${TARGET_SOURCE}"
+              --status failure
+              --failure "app-check-permission: bootstrap check-run failed: ${output}"
+              --check-mode "${TARGET_CHECK_MODE:-full}"
+              --changed-paths-json "${TARGET_CHANGED_PATHS:-[]}"
+              --changed-files-json "${TARGET_CHANGED_FILES:-[]}"
+              --output "${CONTROL_REPORT}"
+              --format json
+            )
+            if [[ -n "${TARGET_FAST_PATH_REASON}" ]]; then
+              args+=(--fast-path-reason "${TARGET_FAST_PATH_REASON}")
+            fi
+            if [[ "${TARGET_PUBLISH}" == "true" ]]; then
+              args+=(--publish)
+            fi
+            while IFS= read -r component; do
+              if [[ -n "${component}" ]]; then
+                args+=(--publish-component "${component}")
+              fi
+            done < <(python - <<'PY'
+          import json
+          import os
+          import sys
+
+          value = os.environ.get("TARGET_PUBLISH_COMPONENTS") or "[]"
+          components = json.loads(value)
+          if not isinstance(components, list):
+              print("TARGET_PUBLISH_COMPONENTS must be a JSON array", file=sys.stderr)
+              raise SystemExit(1)
+          for component in components:
+              print(component)
+          PY
+          )
+            python -m aio_fleet "${args[@]}"
+            echo "${output}" >&2
+            exit "${status}"
+          fi
+          echo "${output}"
+
+      - name: Checkout app repo
+        if: ${{ steps.start-poll-central-control-check.outcome == 'success' && steps.fast-cleanup-scope.outcome != 'success' }}
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: wgross19/${{ matrix.target.repo }}
+          ref: ${{ matrix.target.sha }}
+          path: app-repo
+          fetch-depth: 0
+          submodules: ${{ matrix.target.event != 'pull_request' && matrix.target.checkout_submodules == true && 'recursive' || 'false' }}
+          token: ${{ steps.app-token.outputs.token }}
+          persist-credentials: false
+
+      - name: Initialize trusted PR submodules
+        if: ${{ matrix.target.event == 'pull_request' && matrix.target.checkout_submodules == true && steps.start-poll-central-control-check.outcome == 'success' && steps.fast-cleanup-scope.outcome != 'success' }}
+        env:
+          TARGET_REPO: ${{ matrix.target.repo }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import os
+          import subprocess
+          from pathlib import Path
+
+          from aio_fleet.manifest import load_manifest
+
+          def run(args: list[str]) -> None:
+              subprocess.run(args, check=True)
+
+          def output(args: list[str]) -> str:
+              return subprocess.check_output(args, text=True).strip()
+
+          repo = load_manifest(Path("fleet.yml")).repo(os.environ["TARGET_REPO"])
+          app_repo = Path("app-repo")
+          trusted = 0
+          for config in repo.raw.get("upstream_monitor") or []:
+              if not isinstance(config, dict):
+                  continue
+              path = str(config.get("submodule_path") or "").strip()
+              upstream_repo = str(config.get("repo") or "").strip()
+              if not path:
+                  continue
+              submodule_path = Path(path)
+              if submodule_path.is_absolute() or ".." in submodule_path.parts:
+                  raise SystemExit(f"{repo.name}: unsafe submodule path: {path}")
+              if not upstream_repo:
+                  raise SystemExit(f"{repo.name}: missing trusted repo for {path}")
+              allowed_urls = {
+                  f"https://github.com/{upstream_repo}",
+                  f"https://github.com/{upstream_repo}.git",
+              }
+              matches = output(
+                  [
+                      "git",
+                      "-C",
+                      str(app_repo),
+                      "config",
+                      "-z",
+                      "-f",
+                      ".gitmodules",
+                      "--get-regexp",
+                      r"^submodule\..*\.path$",
+                  ]
+              ).split("\0")
+              section_names = []
+              for record in matches:
+                  if not record:
+                      continue
+                  key, sep, value = record.partition("\n")
+                  if not sep:
+                      raise SystemExit(
+                          f"{repo.name}: malformed .gitmodules path record: {record}"
+                      )
+                  key = key.strip()
+                  value = value.strip()
+                  if value != path:
+                      continue
+                  section_names.append(key.removeprefix("submodule.").removesuffix(".path"))
+              if len(section_names) != 1:
+                  raise SystemExit(
+                      f"{repo.name}: expected exactly one .gitmodules section for {path}, "
+                      f"found {len(section_names)}"
+                  )
+              section_name = section_names[0]
+              actual_url = output(
+                  [
+                      "git",
+                      "-C",
+                      str(app_repo),
+                      "config",
+                      "-f",
+                      ".gitmodules",
+                      "--get",
+                      f"submodule.{section_name}.url",
+                  ]
+              )
+              if actual_url not in allowed_urls:
+                  raise SystemExit(
+                      f"{repo.name}: untrusted submodule url for {path}: {actual_url}"
+                  )
+              tree = output(["git", "-C", str(app_repo), "ls-tree", "HEAD", path])
+              parts = tree.split()
+              if len(parts) < 3 or parts[1] != "commit":
+                  raise SystemExit(f"{repo.name}: {path} is not a gitlink")
+              expected_sha = parts[2]
+              trusted_url = f"https://github.com/{upstream_repo}.git"
+              run(["git", "-C", str(app_repo), "submodule", "init", "--", path])
+              run(
+                  [
+                      "git",
+                      "-C",
+                      str(app_repo),
+                      "config",
+                      f"submodule.{section_name}.url",
+                      trusted_url,
+                  ]
+              )
+              run(
+                  [
+                      "git",
+                      "-C",
+                      str(app_repo),
+                      "-c",
+                      "credential.helper=",
+                      "-c",
+                      "http.extraHeader=",
+                      "submodule",
+                      "update",
+                      "--init",
+                      "--depth=1",
+                      "--",
+                      path,
+                  ]
+              )
+              actual_sha = output(
+                  ["git", "-C", str(app_repo / path), "rev-parse", "HEAD"]
+              )
+              if actual_sha != expected_sha:
+                  raise SystemExit(
+                      f"{repo.name}: {path} checked out {actual_sha}, "
+                      f"expected {expected_sha}"
+                  )
+              trusted += 1
+          if trusted == 0:
+              raise SystemExit(f"{repo.name}: no trusted submodules configured")
+          PY
+
+      - name: Run central control check
+        id: poll-central-control-check
+        if: ${{ steps.start-poll-central-control-check.outcome == 'success' && steps.fast-cleanup-scope.outcome != 'success' }}
+        continue-on-error: true
+        env:
+          TARGET_REPO: ${{ matrix.target.repo }}
+          TARGET_SHA: ${{ matrix.target.sha }}
+          TARGET_SOURCE: ${{ matrix.target.source }}
+          TARGET_EVENT: ${{ matrix.target.event }}
+          TARGET_PUBLISH: ${{ matrix.target.publish }}
+          TARGET_PUBLISH_COMPONENTS: ${{ toJSON(matrix.target.publish_components) }}
+          TARGET_CHANGED_PATHS: ${{ toJSON(matrix.target.changed_paths) }}
+          TARGET_CHANGED_FILES: ${{ toJSON(matrix.target.changed_files) }}
+          CONTROL_REPORT: ${{ runner.temp }}/poll-central-control-report.json
+        run: |
+          set -euo pipefail
+          unset GITHUB_ENV GITHUB_OUTPUT GITHUB_PATH GITHUB_STEP_SUMMARY
+          args=(
+            control-check
+            --repo "${TARGET_REPO}"
+            --repo-path app-repo
+            --sha "${TARGET_SHA}"
+            --source "${TARGET_SOURCE}"
+            --event "${TARGET_EVENT}"
+          )
+          if [[ "${TARGET_PUBLISH}" == "true" ]]; then
+            args+=(--publish --validation-only --no-github-prereleases)
+          fi
+          while IFS= read -r component; do
+            if [[ -n "${component}" ]]; then
+              args+=(--publish-component "${component}")
+            fi
+          done < <(python - <<'PY'
+          import json
+          import os
+          import sys
+
+          value = os.environ.get("TARGET_PUBLISH_COMPONENTS") or "[]"
+          components = json.loads(value)
+          if not isinstance(components, list):
+              print("TARGET_PUBLISH_COMPONENTS must be a JSON array", file=sys.stderr)
+              raise SystemExit(1)
+          for component in components:
+              print(component)
+          PY
+          )
+          args+=(--changed-paths-json "${TARGET_CHANGED_PATHS}")
+          args+=(--changed-files-json "${TARGET_CHANGED_FILES}")
+          args+=(--report-json "${CONTROL_REPORT}")
+          python -m aio_fleet "${args[@]}" 2>&1 | tee central-control-check.log
+
+      - name: Restore trusted aio-fleet checkout
+        if: ${{ always() && steps.fast-cleanup-scope.outcome != 'success' }}
+        run: |
+          set -euo pipefail
+          git reset --hard HEAD
+          git clean -ffd -e app-repo/
+          python -m pip install --force-reinstall .
+
+      - name: Complete central control check
+        if: ${{ always() && steps.start-poll-central-control-check.outcome == 'success' && (steps.fast-cleanup-scope.outcome == 'success' || matrix.target.publish != true || steps.poll-central-control-check.outcome != 'success') }}
+        env:
+          TARGET_REPO: ${{ matrix.target.repo }}
+          TARGET_SHA: ${{ matrix.target.sha }}
+          TARGET_EVENT: ${{ matrix.target.event }}
+          FAST_CLEANUP_OUTCOME: ${{ steps.fast-cleanup-scope.outcome }}
+          CHECK_OUTCOME: ${{ steps.poll-central-control-check.outcome }}
+          AIO_FLEET_CHECK_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          set -euo pipefail
+          conclusion=success
+          summary="aio-fleet central check passed"
+          if [[ "${FAST_CLEANUP_OUTCOME}" == "success" ]]; then
+            summary="aio-fleet cleanup-only fast path passed"
+          fi
+          if [[ "${FAST_CLEANUP_OUTCOME}" != "success" && "${CHECK_OUTCOME}" != "success" ]]; then
+            conclusion=failure
+            summary="aio-fleet central check failed"
+          fi
+          python -I -m aio_fleet check run \
+            --repo "${TARGET_REPO}" \
+            --sha "${TARGET_SHA}" \
+            --event "${TARGET_EVENT}" \
+            --status completed \
+            --conclusion "${conclusion}" \
+            --summary "${summary}"
+          if [[ "${FAST_CLEANUP_OUTCOME}" != "success" && "${CHECK_OUTCOME}" != "success" ]]; then
+            exit 1
+          fi
+
+      - name: Fail central control check bootstrap
+        if: ${{ always() && steps.start-poll-central-control-check.outcome == 'failure' }}
+        run: |
+          set -euo pipefail
+          echo "central control check bootstrap failed before app checkout" >&2
+          exit 1
+
+      - name: Alert poll-check failure
+        if: ${{ always() }}
+        env:
+          AIO_FLEET_KUMA_PUSH_URL: ${{ secrets.AIO_FLEET_KUMA_PUSH_URL }}
+          AIO_FLEET_ALERT_WEBHOOK_URL: ${{ secrets.AIO_FLEET_ALERT_WEBHOOK_URL }}
+          DETAILS_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          JOB_STATUS: ${{ job.status }}
+          TARGET_REPO: ${{ matrix.target.repo }}
+          TARGET_SHA: ${{ matrix.target.sha }}
+          TARGET_SOURCE: ${{ matrix.target.source }}
+          TARGET_EVENT: ${{ matrix.target.event }}
+          TARGET_PUBLISH: ${{ matrix.target.publish }}
+          CONTROL_REPORT: ${{ runner.temp }}/poll-central-control-report.json
+        run: |
+          set +e
+          if [[ "${JOB_STATUS}" == "success" ]]; then
+            exit 0
+          fi
+          dedupe="poll-check:${TARGET_REPO}:${TARGET_SOURCE}:${TARGET_SHA}"
+          if [[ -f "${CONTROL_REPORT}" ]]; then
+            python -m aio_fleet alert send \
+              --event poll-check \
+              --report-json "${CONTROL_REPORT}" \
+              --dedupe-key "${dedupe}" \
+              --details-url "${DETAILS_URL}" \
+              --format json
+            exit 0
+          fi
+          python -m aio_fleet alert send \
+            --event poll-check \
+            --status "${JOB_STATUS}" \
+            --repo "${TARGET_REPO}" \
+            --dedupe-key "${dedupe}" \
+            --annotation "source=${TARGET_SOURCE}" \
+            --annotation "event=${TARGET_EVENT}" \
+            --annotation "sha=${TARGET_SHA}" \
+            --summary "aio-fleet required check failed for ${TARGET_REPO}" \
+            --details-url "${DETAILS_URL}" \
+            --format json
+          exit 0
+
+      - name: Upload poll-check artifacts
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: poll-check-${{ matrix.target.repo }}-${{ matrix.target.sha }}
+          if-no-files-found: ignore
+          retention-days: 14
+          path: |
+            ${{ runner.temp }}/poll-central-control-report.json
+
+  poll-registry-publish:
+    name: poll-registry-publish (${{ matrix.target.repo }} / ${{ join(matrix.target.publish_components, ',') || 'all' }} / ${{ matrix.target.sha }})
+    # Kept inline with manual-registry-publish because both jobs must bind their
+    # own protected registry-publish environment and job-scoped package writer.
+    needs:
+      - control-plane
+      - poll-checks
+    if: ${{ always() && needs.control-plane.outputs.poll_run_checks == 'true' && needs.control-plane.outputs.poll_has_publish_targets == 'true' && needs.poll-checks.result == 'success' }}
+    runs-on: ubuntu-latest
+    environment:
+      name: registry-publish
+      url: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    permissions:
+      contents: read # checkout trusted fleet code and the reviewed app ref
+      checks: write # complete the required aio-fleet check-run
+      packages: write # publish GHCR images from the protected registry environment
+    concurrency:
+      group: aio-fleet-publish-${{ matrix.target.repo }}-${{ matrix.target.sha }}-${{ join(matrix.target.publish_components, '-') || 'all' }}
+      cancel-in-progress: false
+    strategy:
+      fail-fast: false
+      matrix:
+        target: ${{ fromJSON(needs.control-plane.outputs.poll_publish_targets) }}
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+    steps:
+      - name: Checkout aio-fleet
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      # Do not cache in publish jobs; avoids release-path cache poisoning.
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.13"
+
+      - name: Install aio-fleet
+        run: |
+          set -euo pipefail
+          python -m pip install -e ".[dev]"
+
+      - name: Prepare Docker auth config
+        run: |
+          set -euo pipefail
+          install -d -m 700 "${RUNNER_TEMP}/aio-fleet-docker-config"
+          printf 'DOCKER_CONFIG=%s\n' "${RUNNER_TEMP}/aio-fleet-docker-config" >> "${GITHUB_ENV}"
+
+      - name: Log in to Docker Hub
+        id: dockerhub-login
+        continue-on-error: true
+        env:
+          DOCKER_CONFIG: ${{ runner.temp }}/aio-fleet-docker-config
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_PUBLISH_TOKEN: ${{ secrets.DOCKERHUB_PUBLISH_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_PUBLISH_TOKEN}" ]]; then
+            echo "Docker Hub publish credentials are missing" >&2
+            exit 1
+          fi
+          echo "::add-mask::${DOCKERHUB_PUBLISH_TOKEN}"
+          printf '%s\n' "${DOCKERHUB_PUBLISH_TOKEN}" \
+            | docker login docker.io \
+                --username "${DOCKERHUB_USERNAME}" \
+                --password-stdin
+
+      - name: Log in to GHCR
+        id: ghcr-login
+        continue-on-error: true
+        env:
+          DOCKER_CONFIG: ${{ runner.temp }}/aio-fleet-docker-config
+          GHCR_USERNAME: ${{ github.repository_owner }}
+          GHCR_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${GHCR_TOKEN}" ]]; then
+            echo "GHCR publish token is missing" >&2
+            exit 1
+          fi
+          echo "::add-mask::${GHCR_TOKEN}"
+          printf '%s\n' "${GHCR_TOKEN}" \
+            | docker login ghcr.io \
+                --username "${GHCR_USERNAME}" \
+                --password-stdin
+
+      - name: Resolve GitHub App token
+        id: app-token
+        env:
+          AIO_FLEET_APP_CLIENT_ID: ${{ vars.AIO_FLEET_APP_CLIENT_ID }}
+          AIO_FLEET_APP_ID: ${{ secrets.AIO_FLEET_APP_ID }}
+          AIO_FLEET_APP_INSTALLATION_ID: ${{ secrets.AIO_FLEET_APP_INSTALLATION_ID }}
+          AIO_FLEET_APP_PRIVATE_KEY: ${{ secrets.AIO_FLEET_APP_PRIVATE_KEY }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          token="$(python -m aio_fleet.github_app --fallback-env GITHUB_TOKEN)"
+          if [[ -z "${token}" ]]; then
+            echo "Unable to resolve a GitHub token for app checkout" >&2
+            exit 1
+          fi
+          echo "::add-mask::${token}"
+          printf 'token=%s\n' "${token}" >> "${GITHUB_OUTPUT}"
+
+      - name: Download poll control report
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
+        with:
+          name: poll-check-${{ matrix.target.repo }}-${{ matrix.target.sha }}
+          path: poll-check-artifacts
+
+      - name: Validate app control report
+        id: app-validation-report
+        continue-on-error: true
+        env:
+          TARGET_REPO: ${{ matrix.target.repo }}
+          TARGET_SHA: ${{ matrix.target.sha }}
+          TARGET_EVENT: ${{ matrix.target.event }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          import sys
+          from pathlib import Path
+
+          report_path = Path("poll-check-artifacts/poll-central-control-report.json")
+          report = json.loads(report_path.read_text(encoding="utf-8"))
+          failures = []
+          if report.get("repo") != os.environ["TARGET_REPO"]:
+              failures.append("repo mismatch")
+          if report.get("sha") != os.environ["TARGET_SHA"]:
+              failures.append("sha mismatch")
+          if report.get("event") != os.environ["TARGET_EVENT"]:
+              failures.append("event mismatch")
+          if report.get("status") != "success":
+              failures.append("app validation did not pass")
+          if report.get("publish") is not True:
+              failures.append("publish was not authorized")
+          if failures:
+              print("; ".join(failures), file=sys.stderr)
+              raise SystemExit(1)
+          PY
+
+      - name: Validate publish credentials
+        id: registry-preflight
+        if: ${{ steps.app-validation-report.outcome == 'success' }}
+        continue-on-error: true
+        env:
+          TARGET_REPO: ${{ matrix.target.repo }}
+          TARGET_SHA: ${{ matrix.target.sha }}
+          TARGET_SOURCE: ${{ matrix.target.source }}
+          TARGET_EVENT: ${{ matrix.target.event }}
+          TARGET_PUBLISH_COMPONENTS: ${{ toJSON(matrix.target.publish_components) }}
+          AIO_FLEET_REGISTRY_AUTH_MODE: preauthenticated
+          DOCKERHUB_LOGIN_OUTCOME: ${{ steps.dockerhub-login.outcome }}
+          GHCR_LOGIN_OUTCOME: ${{ steps.ghcr-login.outcome }}
+          CONTROL_REPORT: ${{ runner.temp }}/poll-central-control-report.json
+        run: |
+          set -euo pipefail
+          install -m 600 poll-check-artifacts/poll-central-control-report.json "${CONTROL_REPORT}"
+          set +e
+          python -I -m aio_fleet registry preflight --mode publish --format json \
+            | tee registry-preflight-report.json
+          status=${PIPESTATUS[0]}
+          set -euo pipefail
+          if [[ "${DOCKERHUB_LOGIN_OUTCOME}" != "success" || "${GHCR_LOGIN_OUTCOME}" != "success" ]]; then
+            status=1
+          fi
+          if [[ ${status} -ne 0 ]]; then
+            args=(
+              workflow control-report
+              --repo "${TARGET_REPO}"
+              --sha "${TARGET_SHA}"
+              --event "${TARGET_EVENT}"
+              --source "${TARGET_SOURCE}"
+              --status failure
+              --publish
+              --failure "credential-gap: registry publish preflight failed"
+              --output "${CONTROL_REPORT}"
+              --format json
+            )
+            while IFS= read -r component; do
+              if [[ -n "${component}" ]]; then
+                args+=(--publish-component "${component}")
+              fi
+            done < <(python - <<'PY'
+          import json
+          import os
+          import sys
+
+          value = os.environ.get("TARGET_PUBLISH_COMPONENTS") or "[]"
+          components = json.loads(value)
+          if not isinstance(components, list):
+              print("TARGET_PUBLISH_COMPONENTS must be a JSON array", file=sys.stderr)
+              raise SystemExit(1)
+          for component in components:
+              print(component)
+          PY
+          )
+            python -m aio_fleet "${args[@]}"
+            exit "${status}"
+          fi
+
+      - name: Set up QEMU
+        if: ${{ steps.registry-preflight.outcome == 'success' }}
+        uses: docker/setup-qemu-action@ce360397dd3f832beb865e1373c09c0e9f86d70a # v4.0.0
+
+      - name: Set up Docker Buildx
+        if: ${{ steps.registry-preflight.outcome == 'success' }}
+        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
+
+      - name: Checkout app repo
+        if: ${{ steps.registry-preflight.outcome == 'success' }}
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: wgross19/${{ matrix.target.repo }}
+          ref: ${{ matrix.target.sha }}
+          path: app-repo
+          fetch-depth: 0
+          submodules: ${{ matrix.target.event != 'pull_request' && matrix.target.checkout_submodules == true && 'recursive' || 'false' }}
+          token: ${{ steps.app-token.outputs.token }}
+          persist-credentials: false
+
+      - name: Reset app checkout before prerelease publish
+        if: ${{ steps.registry-preflight.outcome == 'success' }}
+        env:
+          TARGET_SHA: ${{ matrix.target.sha }}
+        run: |
+          set -euo pipefail
+          git -C app-repo reset --hard "${TARGET_SHA}"
+          git -C app-repo clean -ffd
+
+      - name: Publish registry images
+        id: poll-registry-publish
+        if: ${{ steps.registry-preflight.outcome == 'success' }}
+        continue-on-error: true
+        uses: ./.github/actions/publish-registry-images
+        env:
+          AIO_FLEET_REGISTRY_AUTH_MODE: preauthenticated
+        with:
+          repo: ${{ matrix.target.repo }}
+          repo-path: app-repo
+          sha: ${{ matrix.target.sha }}
+          source: ${{ matrix.target.source }}
+          event: ${{ matrix.target.event }}
+          publish-components-json: ${{ toJSON(matrix.target.publish_components) }}
+          control-report: ${{ runner.temp }}/poll-central-control-report.json
+
+      - name: Publish GitHub prereleases
+        id: poll-github-prereleases
+        if: ${{ steps.poll-registry-publish.outcome == 'success' }}
+        continue-on-error: true
+        env:
+          TARGET_REPO: ${{ matrix.target.repo }}
+          TARGET_SHA: ${{ matrix.target.sha }}
+          TARGET_PUBLISH_COMPONENTS: ${{ toJSON(matrix.target.publish_components) }}
+          AIO_FLEET_RELEASE_TOKEN: ${{ steps.app-token.outputs.token }}
+          CONTROL_REPORT: ${{ runner.temp }}/poll-central-control-report.json
+        run: |
+          set -euo pipefail
+          args=(
+            release
+            publish-github-prereleases
+            --repo "${TARGET_REPO}"
+            --repo-path app-repo
+            --expected-sha "${TARGET_SHA}"
+            --control-report-json "${CONTROL_REPORT}"
+          )
+          while IFS= read -r component; do
+            if [[ -n "${component}" ]]; then
+              args+=(--component "${component}")
+            fi
+          done < <(python - <<'PY'
+          import json
+          import os
+          import sys
+
+          value = os.environ.get("TARGET_PUBLISH_COMPONENTS") or "[]"
+          components = json.loads(value)
+          if not isinstance(components, list):
+              print("TARGET_PUBLISH_COMPONENTS must be a JSON array", file=sys.stderr)
+              raise SystemExit(1)
+          for component in components:
+              print(component)
+          PY
+          )
+          python -I -m aio_fleet "${args[@]}"
+
+      - name: Publish GitHub release
+        id: poll-github-release
+        if: ${{ steps.poll-registry-publish.outcome == 'success' }}
+        continue-on-error: true
+        env:
+          TARGET_REPO: ${{ matrix.target.repo }}
+          TARGET_PUBLISH_COMPONENTS: ${{ toJSON(matrix.target.publish_components) }}
+          AIO_FLEET_RELEASE_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          set -euo pipefail
+          # Formal aio GitHub Release for each published component once its
+          # chore(release): <ver> changelog is on main. Idempotent; no-ops when no
+          # release is due; github_prerelease components are handled above.
+          while IFS= read -r component; do
+            [[ -n "${component}" ]] || continue
+            python -I -m aio_fleet release publish \
+              --repo "${TARGET_REPO}" \
+              --repo-path app-repo \
+              --component "${component}"
+          done < <(python - <<'PY'
+          import json
+          import os
+          import sys
+
+          value = os.environ.get("TARGET_PUBLISH_COMPONENTS") or "[]"
+          components = json.loads(value)
+          if not isinstance(components, list):
+              print("TARGET_PUBLISH_COMPONENTS must be a JSON array", file=sys.stderr)
+              raise SystemExit(1)
+          for component in components or ["aio"]:
+              print(component)
+          PY
+          )
+
+      - name: Complete central control check
+        if: ${{ always() }}
+        env:
+          TARGET_REPO: ${{ matrix.target.repo }}
+          TARGET_SHA: ${{ matrix.target.sha }}
+          TARGET_EVENT: ${{ matrix.target.event }}
+          REPORT_OUTCOME: ${{ steps.app-validation-report.outcome }}
+          PREFLIGHT_OUTCOME: ${{ steps.registry-preflight.outcome }}
+          PUBLISH_OUTCOME: ${{ steps.poll-registry-publish.outcome }}
+          RELEASE_OUTCOME: ${{ steps.poll-github-prereleases.outcome }}
+          GITHUB_RELEASE_OUTCOME: ${{ steps.poll-github-release.outcome }}
+          AIO_FLEET_CHECK_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          set -euo pipefail
+          conclusion=success
+          summary="aio-fleet central check passed"
+          if [[ "${REPORT_OUTCOME}" == "failure" ]]; then
+            conclusion=failure
+            summary="aio-fleet app validation report failed"
+          elif [[ "${PREFLIGHT_OUTCOME}" == "failure" ]]; then
+            conclusion=failure
+            summary="aio-fleet registry preflight failed"
+          elif [[ "${PUBLISH_OUTCOME}" == "failure" ]]; then
+            conclusion=failure
+            summary="aio-fleet registry publish failed"
+          elif [[ "${RELEASE_OUTCOME}" == "failure" ]]; then
+            conclusion=failure
+            summary="aio-fleet GitHub prerelease publish failed"
+          elif [[ "${GITHUB_RELEASE_OUTCOME}" == "failure" ]]; then
+            conclusion=failure
+            summary="aio-fleet GitHub release publish failed"
+          fi
+          python -I -m aio_fleet check run \
+            --repo "${TARGET_REPO}" \
+            --sha "${TARGET_SHA}" \
+            --event "${TARGET_EVENT}" \
+            --status completed \
+            --conclusion "${conclusion}" \
+            --summary "${summary}"
+          if [[ "${conclusion}" != "success" ]]; then
+            exit 1
+          fi
+
+      - name: Alert poll-check publish status
+        if: ${{ always() }}
+        env:
+          AIO_FLEET_KUMA_PUSH_URL: ${{ secrets.AIO_FLEET_KUMA_PUSH_URL }}
+          AIO_FLEET_ALERT_WEBHOOK_URL: ${{ secrets.AIO_FLEET_ALERT_WEBHOOK_URL }}
+          DETAILS_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          CONTROL_REPORT: ${{ runner.temp }}/poll-central-control-report.json
+        run: |
+          set +e
+          if [[ -f "${CONTROL_REPORT}" ]]; then
+            python -m aio_fleet alert send \
+              --event publish \
+              --report-json "${CONTROL_REPORT}" \
+              --details-url "${DETAILS_URL}" \
+              --format json
+          else
+            python -m aio_fleet alert send \
+              --event publish \
+              --status failure \
+              --summary "Poll publish did not produce a report" \
+              --details-url "${DETAILS_URL}" \
+              --format json
+          fi
+          exit 0
+
+      - name: Upload poll publish artifacts
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: poll-registry-publish-${{ matrix.target.repo }}-${{ matrix.target.sha }}
+          if-no-files-found: ignore
+          retention-days: 14
+          path: |
+            registry-preflight-report.json
+            ${{ runner.temp }}/poll-central-control-report.json

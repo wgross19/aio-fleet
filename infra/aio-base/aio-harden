@@ -1,0 +1,28 @@
+#!/bin/bash
+# Shared AIO image hardening, installed by the aio-base overlay.
+#
+#   aio-harden pre    Rewrite inherited apt sources to https and add retry/timeout
+#                     defaults. Run before `apt-get update`.
+#   aio-harden post   Remove the Debian snakeoil self-signed cert and apt lists.
+#                     Run after package installs, in the same RUN layer.
+#
+# Centralizing this means a fleet-wide change to apt hardening is a one-line edit
+# here instead of an edit to every app Dockerfile.
+set -euo pipefail
+
+case "${1-}" in
+pre)
+	find /etc/apt -type f \( -name '*.list' -o -name '*.sources' \) \
+		-exec sed -i 's|http://|https://|g' {} +
+	printf 'Acquire::Retries "5";\nAcquire::http::Timeout "30";\nAcquire::https::Timeout "30";\n' \
+		>/etc/apt/apt.conf.d/80-retries
+	;;
+post)
+	rm -f /etc/ssl/private/ssl-cert-snakeoil.key /etc/ssl/certs/ssl-cert-snakeoil.pem
+	rm -rf /var/lib/apt/lists/*
+	;;
+*)
+	echo "usage: aio-harden [pre|post]" >&2
+	exit 1
+	;;
+esac

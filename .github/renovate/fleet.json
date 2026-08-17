@@ -1,0 +1,82 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "description": "Central low-noise dependency policy for the public wgross19 AIO fleet.",
+  "platform": "github",
+  "endpoint": "https://api.github.com/",
+  "repositories": [
+    "wgross19/aio-fleet",
+    "wgross19/awesome-unraid",
+    "wgross19/dify-aio",
+    "wgross19/infisical-aio",
+    "wgross19/khoj-aio",
+    "wgross19/mem0-aio",
+    "wgross19/nanoclaw-aio",
+    "wgross19/penpot-aio",
+    "wgross19/signoz-aio",
+    "wgross19/simplelogin-aio",
+    "wgross19/sure-aio",
+    "wgross19/unraid-aio-template"
+  ],
+  "extends": ["config:recommended"],
+  "onboarding": false,
+  "requireConfig": "optional",
+  "branchPrefix": "renovate/fleet/",
+  "onboardingBranch": "renovate/fleet/configure",
+  "semanticCommits": "enabled",
+  "semanticCommitType": "chore",
+  "semanticCommitScope": "deps",
+  "dependencyDashboard": true,
+  "dependencyDashboardAutoclose": true,
+  "dependencyDashboardTitle": "Dependency Dashboard",
+  "timezone": "America/Phoenix",
+  "schedule": ["* 2-6 * * 1"],
+  "updateNotScheduled": false,
+  "minimumReleaseAge": "3 days",
+  "prConcurrentLimit": 2,
+  "branchConcurrentLimit": 2,
+  "prHourlyLimit": 1,
+  "commitHourlyLimit": 2,
+  "rebaseWhen": "conflicted",
+  "enabledManagers": [
+    "github-actions",
+    "pep621",
+    "pip_requirements",
+    "pip_setup",
+    "npm"
+  ],
+  "ignorePaths": [
+    "**/.trunk/**",
+    "**/rootfs/**",
+    "**/rootfs-alpha/**",
+    "**/patches/**"
+  ],
+  "packageRules": [
+    {
+      "description": "Group GitHub Actions updates so workflow pin churn stays reviewable.",
+      "matchManagers": ["github-actions"],
+      "groupName": "github actions",
+      "semanticCommitType": "chore",
+      "semanticCommitScope": "deps"
+    },
+    {
+      "description": "Group Python test/control-plane dependencies by repo.",
+      "matchManagers": ["pep621", "pip_requirements", "pip_setup"],
+      "groupName": "python dependencies",
+      "semanticCommitType": "chore",
+      "semanticCommitScope": "deps"
+    },
+    {
+      "description": "Group JavaScript dependencies where app repos carry package manifests.",
+      "matchManagers": ["npm"],
+      "groupName": "javascript dependencies",
+      "semanticCommitType": "chore",
+      "semanticCommitScope": "deps"
+    },
+    {
+      "description": "Keep major upgrades separate and operator-approved.",
+      "matchUpdateTypes": ["major"],
+      "dependencyDashboardApproval": true,
+      "groupName": null
+    }
+  ]
+}

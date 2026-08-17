@@ -1,0 +1,402 @@
+repositories = {
+  "aio-fleet" = {
+    description = "Central control plane for wgross19 Unraid AIO repository policy, release checks, dashboard reporting, and fleet automation."
+    topics = [
+      "automation",
+      "ci",
+      "github-actions",
+      "homelab",
+      "release-automation",
+      "self-hosted",
+      "unraid",
+      "unraid-templates",
+    ]
+    required_checks = [
+      "test",
+      "infra",
+      "Analyze (actions)",
+      "Analyze (python)",
+      "Superagent Security Scan",
+      "Contributor trust",
+    ]
+    required_check_app_ids = {
+      "test"              = 15368
+      "infra"             = 15368
+      "Analyze (actions)" = 15368
+      "Analyze (python)"  = 15368
+      "Superagent Security Scan"     = 3287076
+      "Contributor trust" = 3287076
+    }
+  }
+
+  "awesome-unraid" = {
+    description = "Production-grade Unraid CA templates for self-hosters tired of half-baked XML files — every env var documented, sane defaults, working init scripts, and actually maintained."
+    topics = [
+      "awesome",
+      "awesome-list",
+      "community-app",
+      "docker",
+      "homelab",
+      "open-source",
+      "privacy",
+      "self-hosting",
+      "unraid",
+      "unraid-community-apps",
+      "unraid-docker-template",
+      "unraid-server",
+      "unraid-templates",
+      "awesome-unraid",
+    ]
+    required_checks = [
+      "validate-catalog",
+      "CodeQL",
+      "Analyze (actions)",
+      "Superagent Security Scan",
+      "Contributor trust",
+    ]
+    required_check_app_ids = {
+      "validate-catalog"  = 15368
+      "CodeQL"            = 57789
+      "Analyze (actions)" = 15368
+      "Superagent Security Scan"     = 3287076
+      "Contributor trust" = 3287076
+    }
+    required_secrets = [
+      "AIO_FLEET_BOT_TOKEN",
+    ]
+  }
+
+  "unraid-aio-template" = {
+    description  = "Repo template for all future Unraid CA app templates."
+    homepage_url = ""
+    topics = [
+      "aio",
+      "docker",
+      "homelab",
+      "self-hosted",
+      "template",
+      "unraid",
+      "unraid-community-apps",
+      "unraid-docker-template",
+      "unraid-template",
+      "unraid-templates",
+    ]
+    required_checks = [
+      "aio-fleet / required",
+      "Superagent Security Scan",
+      "Contributor trust",
+    ]
+    required_check_app_id = 3565017
+    required_check_app_ids = {
+      "Superagent Security Scan"     = 3287076
+      "Contributor trust" = 3287076
+    }
+  }
+
+  "sure-aio" = {
+    description = "The absolute easiest way to deploy Sure (Maybe Finance fork) on Unraid. A 100% self-contained mega-container with automated PostgreSQL, Redis, Rails, and Sidekiq orchestration. No external databases required."
+    topics = [
+      "ai-finance",
+      "budgeting",
+      "docker",
+      "finance-app",
+      "finance-tracker",
+      "fire",
+      "homelab",
+      "maybe-finance",
+      "open-source-finance",
+      "personal-finance",
+      "postgresql",
+      "redis",
+      "ruby-on-rails",
+      "s6-overlay",
+      "self-hosted",
+      "sure-finance",
+      "unraid",
+      "unraid-docker-template",
+      "unraid-templates",
+      "sure-aio",
+    ]
+    required_checks = [
+      "aio-fleet / required",
+      "Superagent Security Scan",
+      "Contributor trust",
+    ]
+    required_check_app_id = 3565017
+    required_check_app_ids = {
+      "Superagent Security Scan"     = 3287076
+      "Contributor trust" = 3287076
+    }
+  }
+
+  "simplelogin-aio" = {
+    description = "SimpleLogin All-in-One Docker image for Unraid — self-host your own email alias service with automatic DKIM, database migrations, and s6-overlay process supervision"
+    topics = [
+      "dkim",
+      "docker",
+      "docker-compose",
+      "email-alias",
+      "email-forwarding",
+      "email-privacy",
+      "email-security",
+      "homelab",
+      "open-source",
+      "postfix",
+      "privacy",
+      "protonmail",
+      "s6-overlay",
+      "self-hosted",
+      "self-hosting",
+      "simplelogin",
+      "tailscale",
+      "unraid",
+      "unraid-community-apps",
+      "unraid-templates",
+    ]
+    required_checks = [
+      "aio-fleet / required",
+      "Superagent Security Scan",
+      "Contributor trust",
+    ]
+    required_check_app_id = 3565017
+    required_check_app_ids = {
+      "Superagent Security Scan"     = 3287076
+      "Contributor trust" = 3287076
+    }
+  }
+
+  "khoj-aio" = {
+    description = "Beginner-friendly All-in-One Unraid container for Khoj, a self-hosted AI second brain. Bundles the Khoj web app with an internal PostgreSQL database in a single container, while still supporting local or hosted LLMs, external search backends, reverse proxies, and advanced power-user overrides."
+    topics = [
+      "ai",
+      "anthropic",
+      "assistant",
+      "container",
+      "docker",
+      "gemini",
+      "homelab",
+      "khoj",
+      "knowledge-base",
+      "llm",
+      "ollama",
+      "openai",
+      "pgvector",
+      "postgresql",
+      "rag",
+      "search",
+      "second-brain",
+      "self-hosted",
+      "unraid",
+      "unraid-template",
+    ]
+    required_checks = [
+      "aio-fleet / required",
+      "Superagent Security Scan",
+      "Contributor trust",
+    ]
+    required_check_app_id = 3565017
+    required_check_app_ids = {
+      "Superagent Security Scan"     = 3287076
+      "Contributor trust" = 3287076
+    }
+  }
+
+  "mem0-aio" = {
+    description = "Unraid CA template and Docker build for Mem0 (OpenMemory). This mega-container utilizes s6-overlay to seamlessly bundle the pre-compiled Qdrant Vector Database, the Python FastAPI/MCP server, and the Next.js Dashboard UI into a single, click-and-play local AI memory layer. Built for homelabs, privacy, and true agentic AI memory retention."
+    topics = [
+      "ai",
+      "container",
+      "docker",
+      "fastapi",
+      "homelab",
+      "llm",
+      "long-term-memory",
+      "mcp",
+      "mem0",
+      "mem0-memory",
+      "mem0ai",
+      "memory",
+      "ollama",
+      "openai",
+      "openmemory",
+      "qdrant",
+      "self-hosted",
+      "unraid",
+      "vector-database",
+      "unraid-template",
+    ]
+    required_checks = [
+      "aio-fleet / required",
+      "Superagent Security Scan",
+      "Contributor trust",
+    ]
+    required_check_app_id = 3565017
+    required_check_app_ids = {
+      "Superagent Security Scan"     = 3287076
+      "Contributor trust" = 3287076
+    }
+  }
+
+  "infisical-aio" = {
+    description = "An Unraid-first AIO wrapper for Infisical secrets manager: one container, bundled PostgreSQL, Redis, and Mailpit, fast first boot, and sane escape hatches when you outgrow the all-in-one path. Secrets management without the day-one dependency spaghetti."
+    topics = [
+      "developer-tools",
+      "docker",
+      "infisical",
+      "secrets",
+      "secrets-management",
+      "unraid",
+      "unraid-community-apps",
+      "unraid-templates",
+      "aio",
+      "community-applications",
+      "devops",
+      "devsecops",
+      "docker-image",
+      "homelab",
+      "mailpit",
+      "postgresql",
+      "redis",
+      "s6-overlay",
+      "self-hosted",
+      "unraid-ca",
+    ]
+    required_checks = [
+      "aio-fleet / required",
+      "Superagent Security Scan",
+      "Contributor trust",
+    ]
+    required_check_app_id = 3565017
+    required_check_app_ids = {
+      "Superagent Security Scan"     = 3287076
+      "Contributor trust" = 3287076
+    }
+  }
+
+  "penpot-aio" = {
+    description = "Unraid-first AIO wrapper for Penpot, bundling the app stack into a practical single-container homelab deployment."
+    topics = [
+      "design",
+      "docker",
+      "homelab",
+      "penpot",
+      "self-hosted",
+      "unraid",
+      "unraid-ca",
+      "unraid-template",
+    ]
+    required_checks = [
+      "aio-fleet / required",
+      "Superagent Security Scan",
+      "Contributor trust",
+    ]
+    required_check_app_id = 3565017
+    required_check_app_ids = {
+      "Superagent Security Scan"     = 3287076
+      "Contributor trust" = 3287076
+    }
+  }
+
+  "dify-aio" = {
+    description = "Dify for Unraid, bottled up as an AIO container: agents, RAG, workflows, plugins, sandboxing, Postgres/pgvector, Redis, and sane homelab defaults without the compose-file maze."
+    topics = [
+      "ai",
+      "ai-agents",
+      "ai-workflows",
+      "chatbot",
+      "dify",
+      "docker",
+      "homelab",
+      "knowledge-base",
+      "llm",
+      "mcp",
+      "ollama",
+      "pgvector",
+      "postgres",
+      "rag",
+      "self-hosted",
+      "self-hosting",
+      "unraid",
+      "unraid-community-apps",
+      "unraid-docker",
+      "unraid-template",
+    ]
+    required_checks = [
+      "aio-fleet / required",
+      "Superagent Security Scan",
+      "Contributor trust",
+    ]
+    required_check_app_id = 3565017
+    required_check_app_ids = {
+      "Superagent Security Scan"     = 3287076
+      "Contributor trust" = 3287076
+    }
+  }
+
+  "signoz-aio" = {
+    description = "All-in-one SigNoz for Unraid: a single self-hosted container bundling SigNoz UI/API, OpenTelemetry collector, ClickHouse, and ZooKeeper, with optional built-in local host monitoring for metrics, logs, Docker stats, and OTLP ingestion."
+    topics = [
+      "aio",
+      "clickhouse",
+      "containers",
+      "devops",
+      "docker",
+      "homelab",
+      "logging",
+      "metrics",
+      "monitoring",
+      "observability",
+      "opentelemetry",
+      "otlp",
+      "prometheus",
+      "self-hosted",
+      "signoz",
+      "telemetry",
+      "tracking",
+      "unraid",
+      "zookeeper",
+      "unraid-ca",
+    ]
+    required_checks = [
+      "aio-fleet / required",
+      "Superagent Security Scan",
+      "Contributor trust",
+    ]
+    required_check_app_id = 3565017
+    required_check_app_ids = {
+      "Superagent Security Scan"     = 3287076
+      "Contributor trust" = 3287076
+    }
+  }
+
+  "nanoclaw-aio" = {
+    description = "Telegram-first NanoClaw v2 for Unraid, with persistent appdata and a paired helper agent image for Docker-socket-spawned agent sessions."
+    topics = [
+      "agent",
+      "agents",
+      "ai",
+      "assistant",
+      "automation",
+      "claude",
+      "docker",
+      "homelab",
+      "nanoclaw",
+      "scheduler",
+      "self-hosted",
+      "telegram",
+      "unraid",
+      "unraid-ca",
+      "unraid-template",
+    ]
+    required_checks = [
+      "aio-fleet / required",
+      "Superagent Security Scan",
+      "Contributor trust",
+    ]
+    required_check_app_id = 3565017
+    required_check_app_ids = {
+      "Superagent Security Scan"     = 3287076
+      "Contributor trust" = 3287076
+    }
+  }
+}

@@ -1,0 +1,89 @@
+name: Published Image Smoke Test
+
+#checkov:skip=CKV_GHA_7:workflow_dispatch has no privileged inputs; it only reruns the read-only smoke test
+on:
+  schedule:
+    - cron: 47 8 * * 1
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  smoke:
+    name: smoke (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    steps:
+      - name: Enforce trusted ref for manual runs
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        env:
+          EXPECTED_REF: refs/heads/${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REF}" != "${EXPECTED_REF}" ]]; then
+            echo "Manual smoke runs are restricted to ${EXPECTED_REF}; got ${GITHUB_REF}." >&2
+            exit 1
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install aio-fleet
+        run: |
+          set -euo pipefail
+          python -m pip install -e ".[dev]"
+
+      - name: Smoke published images
+        id: smoke
+        run: |
+          set -euo pipefail
+          python -m aio_fleet workflow smoke-test \
+            --arch "${{ matrix.arch }}" \
+            --output "smoke-${{ matrix.arch }}.json" \
+            --github-output "${GITHUB_OUTPUT}"
+
+      - name: Publish smoke summary
+        if: ${{ always() }}
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          report="smoke-${ARCH}.json"
+          {
+            echo "## Published Image Smoke Test (${ARCH})"
+            echo
+            if [[ -f "${report}" ]]; then
+              python - "${report}" <<'PY'
+          import json, sys
+          data = json.load(open(sys.argv[1]))
+          print(f"Passed {data['passed']}/{data['total']} images.\n")
+          print("| Repo | Image | Status | Detail |")
+          print("| --- | --- | --- | --- |")
+          for r in data["results"]:
+              print(f"| {r['repo']} | `{r['image']}` | {r['status']} | {r['detail']} |")
+          PY
+            else
+              echo "Smoke test did not produce a report."
+            fi
+          } >> "${GITHUB_STEP_SUMMARY}"

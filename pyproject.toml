@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aio-fleet"
+version = "0.1.0"
+description = "Control plane for the Unraid App Factory"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = ["defusedxml>=0.7.1", "PyYAML>=6.0.2"]
+
+[project.optional-dependencies]
+app-tests = ["defusedxml>=0.7.1", "pytest>=9.0.0"]
+dev = ["aio-fleet[app-tests]"]
+
+[project.scripts]
+aio-fleet = "aio_fleet.cli:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

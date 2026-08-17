@@ -1,0 +1,78 @@
+name: Publish registry images
+description: Run the trusted registry publish phase after app validation passes.
+inputs:
+  repo:
+    required: true
+    description: Fleet repo key to publish.
+  repo-path:
+    required: true
+    description: Checked-out app repository path.
+  sha:
+    required: true
+    description: Reviewed app commit SHA.
+  source:
+    required: true
+    description: Control-plane source label.
+  event:
+    required: true
+    description: App event type.
+  publish-component:
+    required: false
+    default: ""
+    description: Optional single component to publish.
+  publish-components-json:
+    required: false
+    default: "[]"
+    description: Optional JSON list of components to publish.
+  control-report:
+    required: true
+    description: Path for the control report JSON.
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        TARGET_REPO: ${{ inputs.repo }}
+        TARGET_REPO_PATH: ${{ inputs.repo-path }}
+        TARGET_SHA: ${{ inputs.sha }}
+        TARGET_SOURCE: ${{ inputs.source }}
+        TARGET_EVENT: ${{ inputs.event }}
+        PUBLISH_COMPONENT: ${{ inputs.publish-component }}
+        TARGET_PUBLISH_COMPONENTS: ${{ inputs.publish-components-json }}
+        CONTROL_REPORT: ${{ inputs.control-report }}
+      run: |
+        set -euo pipefail
+        args=(
+          control-check
+          --repo "${TARGET_REPO}"
+          --repo-path "${TARGET_REPO_PATH}"
+          --sha "${TARGET_SHA}"
+          --source "${TARGET_SOURCE}"
+          --event "${TARGET_EVENT}"
+          --publish
+          --publish-only
+          --no-github-prereleases
+        )
+        if [[ -n "${PUBLISH_COMPONENT}" ]]; then
+          args+=(--publish-component "${PUBLISH_COMPONENT}")
+        fi
+        while IFS= read -r component; do
+          if [[ -n "${component}" ]]; then
+            args+=(--publish-component "${component}")
+          fi
+        done < <(python - <<'PY'
+        import json
+        import os
+        import sys
+
+        value = os.environ.get("TARGET_PUBLISH_COMPONENTS") or "[]"
+        components = json.loads(value)
+        if not isinstance(components, list):
+            print("publish-components-json must be a JSON array", file=sys.stderr)
+            raise SystemExit(1)
+        for component in components:
+            print(component)
+        PY
+        )
+        args+=(--report-json "${CONTROL_REPORT}")
+        python -I -m aio_fleet "${args[@]}" 2>&1 | tee registry-publish.log

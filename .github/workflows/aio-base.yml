@@ -1,0 +1,81 @@
+name: Publish AIO Base Overlay
+
+# Builds and publishes the shared s6-overlay + hardening stage (infra/aio-base)
+# that the fleet's app images consume via `COPY --from=wgross19/aio-base:...`.
+# Multi-arch and gated behind the protected registry-publish environment, like
+# the app publish path.
+#checkov:skip=CKV_GHA_7:workflow_dispatch has no privileged inputs beyond the gated publish itself
+on:
+  workflow_dispatch: {}
+  push:
+    branches: [main]
+    paths:
+      - infra/aio-base/**
+      - .github/workflows/aio-base.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+env:
+  IMAGE: wgross19/aio-base
+  TAG: s6-3.2.1.0
+
+jobs:
+  publish-aio-base:
+    runs-on: ubuntu-latest
+    environment: registry-publish
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Enforce trusted ref
+        env:
+          EXPECTED_REF: refs/heads/${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REF}" != "${EXPECTED_REF}" ]]; then
+            echo "aio-base publish is restricted to ${EXPECTED_REF}; got ${GITHUB_REF}." >&2
+            exit 1
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@29109295f81e9208d7d86ff1c6c12d2833863392 # v3.6.0
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772 # v3.4.0
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_PUBLISH_TOKEN }}
+
+      - name: Log in to GHCR
+        uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772 # v3.4.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Build and push (amd64 + arm64)
+        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
+        with:
+          context: infra/aio-base
+          platforms: linux/amd64,linux/arm64
+          push: true
+          provenance: mode=max
+          sbom: true
+          tags: |
+            ${{ env.IMAGE }}:${{ env.TAG }}
+            ${{ env.IMAGE }}:latest
+            ghcr.io/${{ env.IMAGE }}:${{ env.TAG }}
+            ghcr.io/${{ env.IMAGE }}:latest

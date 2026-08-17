@@ -1,0 +1,114 @@
+name: Fleet Renovate
+
+#checkov:skip=CKV_GHA_7:workflow_dispatch is limited to dry-run/log controls and still enforces the default branch
+#checkov:skip=CKV_SECRET_6:Renovate receives a masked runtime GitHub App token generated inside the job
+on:
+  schedule:
+    - cron: 27 9 * * 1
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Run Renovate without creating or updating branches/PRs
+        required: false
+        default: true
+        type: boolean
+      log_level:
+        description: Renovate log level
+        required: false
+        default: info
+        type: choice
+        options:
+          - info
+          - debug
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  renovate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Enforce trusted ref for manual runs
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        env:
+          EXPECTED_REF: refs/heads/${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REF}" != "${EXPECTED_REF}" ]]; then
+            echo "Manual Renovate runs are restricted to ${EXPECTED_REF}; got ${GITHUB_REF}." >&2
+            exit 1
+          fi
+
+      - name: Checkout aio-fleet
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install aio-fleet
+        run: |
+          set -euo pipefail
+          python -m pip install -e ".[dev]"
+
+      - name: Resolve GitHub App token
+        id: app-token
+        env:
+          AIO_FLEET_APP_CLIENT_ID: ${{ vars.AIO_FLEET_APP_CLIENT_ID }}
+          AIO_FLEET_APP_ID: ${{ secrets.AIO_FLEET_APP_ID }}
+          AIO_FLEET_APP_INSTALLATION_ID: ${{ secrets.AIO_FLEET_APP_INSTALLATION_ID }}
+          AIO_FLEET_APP_PRIVATE_KEY: ${{ secrets.AIO_FLEET_APP_PRIVATE_KEY }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          token="$(python -m aio_fleet.github_app --fallback-env GITHUB_TOKEN)"
+          if [[ -z "${token}" ]]; then
+            echo "Unable to resolve a GitHub token for Renovate" >&2
+            exit 1
+          fi
+          echo "::add-mask::${token}"
+          printf 'token=%s\n' "${token}" >> "${GITHUB_OUTPUT}"
+
+      - name: Prepare Renovate runtime
+        env:
+          REQUESTED_DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run == true }}
+          REQUESTED_LOG_LEVEL: ${{ github.event_name == 'workflow_dispatch' && inputs.log_level || 'info' }}
+        run: |
+          set -euo pipefail
+          if [[ "${REQUESTED_DRY_RUN}" == "true" ]]; then
+            echo "RENOVATE_DRY_RUN=full" >> "${GITHUB_ENV}"
+          fi
+          echo "LOG_LEVEL=${REQUESTED_LOG_LEVEL}" >> "${GITHUB_ENV}"
+
+      - name: Validate Renovate config
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          config = json.loads(Path(".github/renovate/fleet.json").read_text())
+          repositories = config.get("repositories")
+          if not isinstance(repositories, list) or not repositories:
+              raise SystemExit("Renovate config must define repositories.")
+          if any(not str(repo).startswith("wgross19/") for repo in repositories):
+              raise SystemExit("Renovate config may only target wgross19 repositories.")
+          PY
+
+      - name: Run Renovate
+        uses: renovatebot/github-action@693b9ef15eec82123529a37c782242f091365961 # v46.1.14
+        env:
+          RENOVATE_GITHUB_COM_TOKEN: ${{ steps.app-token.outputs.token }}
+        with:
+          configurationFile: .github/renovate/fleet.json
+          renovate-version: 43.209.1
+          token: ${{ steps.app-token.outputs.token }}
