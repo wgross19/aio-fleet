@@ -27,4 +27,26 @@ defaults:
     autopilot: false
     checkout_policy: standard
     publish_policy: central-control
-repos: {}
+repos:
+  gbrain-aio:
+    path: ../gbrain-vanilla-aio
+    github_repo: wgross19/gbrain-vanilla-aio
+    public: true
+    workflow_name: CI / GBrain AIO
+    app_slug: gbrain-aio
+    image_name: wgross19/gbrain-aio
+    docker_cache_scope: gbrain-aio-image
+    pytest_image_tag: gbrain-aio:pytest
+    unit_pytest_args: tests/test_dockerfile_policy.py
+    publish_profile: changelog-version
+    release_name: GBrain AIO
+    upstream_name: GBrain
+    image_description: Unraid-first AIO wrapper image for vanilla GBrain (Postgres, Caddy, worker)
+    catalog_published: false
+    xml_paths:
+      - gbrain-aio.xml
+    catalog_assets:
+      - source: gbrain-aio.xml
+        target: gbrain-aio.xml
+      - source: assets/app-icon.png
+        target: icons/gbrain.png
