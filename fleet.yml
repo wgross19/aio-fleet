@@ -13,7 +13,7 @@ dashboard:
 defaults:
   python_version: "3.13"
   publish_platforms: linux/amd64,linux/arm64
-  integration_pytest_args: tests/integration -m integration
+  integration_pytest_args: tests/integration -m integration --timeout=90
   non_release_paths:
     - .aio-fleet.yml
     - README.md
