@@ -34,7 +34,7 @@ repos:
     public: true
     workflow_name: CI / GBrain AIO
     app_slug: gbrain-aio
-    image_name: wgross19/gbrain-aio
+    image_name: dub19/gbrain-aio
     docker_cache_scope: gbrain-aio-image
     pytest_image_tag: gbrain-aio:pytest
     unit_pytest_args: tests/test_dockerfile_policy.py
