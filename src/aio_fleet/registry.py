@@ -55,7 +55,12 @@ def compute_registry_tags(
 ) -> RegistryTagSet:
     image_name = _component_image_name(repo, component)
     dockerhub_image = image_name.lower()
-    ghcr_image = (ghcr_image_name or f"ghcr.io/{image_name}").lower()
+    # GHCR packages live under the GitHub owner (repo.github_repo), NOT the
+    # Docker Hub namespace (image_name). These can differ (e.g. GitHub
+    # wgross19/gbrain-aio, Docker Hub dub19/gbrain-aio). Deriving GHCR from
+    # image_name would push to ghcr.io/<dockerhub-owner>/... which does not
+    # exist. Use the GitHub repo path unless an explicit override is given.
+    ghcr_image = (ghcr_image_name or f"ghcr.io/{repo.github_repo}").lower()
     upstream_version = _read_component_upstream_version(repo, component)
     release_package_tag = _release_package_tag(repo, sha=sha, component=component)
     version_tags_allowed = _version_tags_allowed(
