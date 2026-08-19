@@ -42,7 +42,7 @@ repos:
     release_name: GBrain AIO
     upstream_name: GBrain
     image_description: Unraid-first AIO wrapper image for vanilla GBrain (Postgres, Caddy, worker)
-    catalog_published: false
+    catalog_published: true
     xml_paths:
       - gbrain-aio.xml
     catalog_assets:
