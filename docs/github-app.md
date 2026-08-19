@@ -30,10 +30,11 @@ the fleet should only validate secret names/presence.
 The control-plane workflows resolve automation credentials through
 `aio_fleet.github_app`:
 
-- If `AIO_FLEET_APP_CLIENT_ID`, `AIO_FLEET_APP_INSTALLATION_ID`, and
+- If `AIO_FLEET_APP_ID`, `AIO_FLEET_APP_INSTALLATION_ID`, and
   `AIO_FLEET_APP_PRIVATE_KEY` are present, `aio-fleet` mints a short-lived
-  installation token. `AIO_FLEET_APP_ID` remains a compatibility fallback for
-  older environments.
+  installation token using the numeric App ID as the JWT `iss` (GitHub
+  requires the App ID, not the client ID, in that claim). `AIO_FLEET_APP_CLIENT_ID`
+  is a last-resort issuer fallback for environments that never configure the App ID.
 - Generated commit paths must use that App token. Missing App credentials are a
   `credential-gap`; do not fall back to a PAT or the repository `GITHUB_TOKEN`
   for generated release/catalog commits.

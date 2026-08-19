@@ -41,7 +41,7 @@ def test_github_app_main_uses_fallback_token(monkeypatch, capsys) -> None:
     assert capsys.readouterr().out.strip() == "fallback-token"  # nosec B101
 
 
-def test_github_app_main_prefers_app_credentials(monkeypatch, capsys) -> None:
+def test_github_app_main_prefers_app_id_as_jwt_issuer(monkeypatch, capsys) -> None:
     calls: list[tuple[str, str, str]] = []
 
     def fake_create_installation_token(
@@ -70,10 +70,11 @@ def test_github_app_main_prefers_app_credentials(monkeypatch, capsys) -> None:
 
     assert github_app.main() == 0  # nosec B101
     assert capsys.readouterr().out.strip() == "app-token"  # nosec B101
-    assert calls == [("client-123", "456", "private-key")]  # nosec B101
+    # GitHub requires the JWT `iss` to be the numeric App ID, not the client ID.
+    assert calls == [("123", "456", "private-key")]  # nosec B101
 
 
-def test_github_app_main_falls_back_to_app_id(monkeypatch, capsys) -> None:
+def test_github_app_main_falls_back_to_client_id(monkeypatch, capsys) -> None:
     calls: list[tuple[str, str, str]] = []
 
     def fake_create_installation_token(
@@ -82,8 +83,8 @@ def test_github_app_main_falls_back_to_app_id(monkeypatch, capsys) -> None:
         calls.append((issuer, installation_id, private_key))
         return "app-token"
 
-    monkeypatch.delenv("AIO_FLEET_APP_CLIENT_ID", raising=False)
-    monkeypatch.setenv("AIO_FLEET_APP_ID", "123")
+    monkeypatch.delenv("AIO_FLEET_APP_ID", raising=False)
+    monkeypatch.setenv("AIO_FLEET_APP_CLIENT_ID", "client-123")
     monkeypatch.setenv("AIO_FLEET_APP_INSTALLATION_ID", "456")
     monkeypatch.setenv("AIO_FLEET_APP_PRIVATE_KEY", "private-key")
     monkeypatch.setattr(
@@ -93,7 +94,7 @@ def test_github_app_main_falls_back_to_app_id(monkeypatch, capsys) -> None:
 
     assert github_app.main() == 0  # nosec B101
     assert capsys.readouterr().out.strip() == "app-token"  # nosec B101
-    assert calls == [("123", "456", "private-key")]  # nosec B101
+    assert calls == [("client-123", "456", "private-key")]  # nosec B101
 
 
 def test_create_installation_token_retries_transient_github_errors(

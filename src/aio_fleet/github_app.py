@@ -53,7 +53,12 @@ def resolve_token(
     app_id = os.environ.get(app_id_env, "").strip()
     installation_id = os.environ.get(installation_id_env, "").strip()
     private_key = os.environ.get(private_key_env, "").strip()
-    issuer = client_id or app_id
+    # GitHub requires the JWT `iss` claim to be the numeric App ID, NOT the
+    # client ID. The workflow always sets AIO_FLEET_APP_CLIENT_ID, so using
+    # `client_id or app_id` here made every minted token 401 (bad issuer).
+    # Prefer the numeric App ID; keep client_id only as a last-resort fallback
+    # for environments that never configure AIO_FLEET_APP_ID.
+    issuer = app_id or client_id
     if issuer and installation_id and private_key:
         return create_installation_token(issuer, installation_id, private_key)
 
