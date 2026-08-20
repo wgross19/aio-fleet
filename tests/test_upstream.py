@@ -656,6 +656,44 @@ def test_stable_filter_keeps_hotfix_and_excludes_alpha() -> None:
     )
 
 
+def test_four_part_version_sorts_after_three_part() -> None:
+    # GBrain tags are 4-part: v0.46.23.0 (major.minor.patch.build).
+    versions = ["v0.46.14.0", "v0.46.23.0", "v0.47.0.0"]
+    assert upstream.SEMVER_RE.match("v0.46.14.0") is not None  # nosec B101
+    assert sorted(versions, key=upstream.version_sort_key)[-1] == "v0.47.0.0"  # nosec B101
+    # Build segment participates in ordering within the same major.minor.patch.
+    assert upstream.version_sort_key("v0.46.23.0") > upstream.version_sort_key(  # nosec B101
+        "v0.46.14.0"
+    )
+
+
+def test_release_candidate_strips_prefix_before_semver_match() -> None:
+    # Bun publishes release tags as `bun-v1.3.14`; the strip must happen before
+    # the semver gate and before sorting, or no candidate is accepted.
+    releases = [
+        {"tag_name": "bun-v1.3.13", "prerelease": False},
+        {"tag_name": "bun-v1.3.14", "prerelease": False},
+    ]
+
+    def fake_http_json(url: str, headers=None):  # noqa: ANN001
+        assert "releases" in url  # nosec B101
+        return releases
+
+    original = upstream.http_json
+    upstream.http_json = fake_http_json
+    try:
+        candidates, _skipped = upstream.github_release_candidates_result(
+            "oven-sh/bun",
+            stable_only=True,
+            strip_prefix="bun-v",
+        )
+    finally:
+        upstream.http_json = original
+
+    assert candidates[0].version == "1.3.14"  # nosec B101
+    assert candidates[0].tag == "bun-v1.3.14"  # nosec B101
+
+
 def test_stable_filter_rejects_hotfix_prefixed_prereleases() -> None:
     versions = [
         "v1.2.3",

@@ -24,6 +24,7 @@ from aio_fleet.safety import assess_expected_update, render_safety_summary
 
 SEMVER_RE = re.compile(
     r"^v?(?P<major>0|[1-9]\d*)\.(?P<minor>0|[1-9]\d*)\.(?P<patch>0|[1-9]\d*)"
+    r"(?:\.(?P<build>0|[1-9]\d*))?"
     r"(?:-(?P<prerelease>[0-9A-Za-z.-]+))?$"
 )
 PRERELEASE_SUFFIXES = {
@@ -708,33 +709,36 @@ def github_release_candidates_result(
         if not isinstance(entry, dict):
             continue
         tag = entry.get("tag_name")
-        if not isinstance(tag, str) or not SEMVER_RE.match(tag):
+        if not isinstance(tag, str):
+            continue
+        version = normalize_version(tag, strip_prefix=strip_prefix)
+        if not SEMVER_RE.match(version):
             continue
         if stable_only and bool(entry.get("prerelease")):
             skipped.append(
                 {
                     "tag": tag,
-                    "version": normalize_version(tag, strip_prefix=strip_prefix),
+                    "version": version,
                     "reason": "github-prerelease",
                 }
             )
             continue
-        if stable_only and is_prerelease_version(tag):
+        if stable_only and is_prerelease_version(version):
             skipped.append(
                 {
                     "tag": tag,
-                    "version": normalize_version(tag, strip_prefix=strip_prefix),
+                    "version": version,
                     "reason": "version-prerelease",
                 }
             )
             continue
         if prerelease_channel and not prerelease_channel_matches(
-            tag, prerelease_channel
+            version, prerelease_channel
         ):
             skipped.append(
                 {
                     "tag": tag,
-                    "version": normalize_version(tag, strip_prefix=strip_prefix),
+                    "version": version,
                     "reason": f"outside-{prerelease_channel}-channel",
                 }
             )
@@ -742,7 +746,7 @@ def github_release_candidates_result(
         candidates.append(
             GitHubReleaseCandidate(
                 tag=tag,
-                version=normalize_version(tag, strip_prefix=strip_prefix),
+                version=version,
             )
         )
     if not candidates:
@@ -750,7 +754,7 @@ def github_release_candidates_result(
     return (
         tuple(
             sorted(
-                candidates, key=lambda item: version_sort_key(item.tag), reverse=True
+                candidates, key=lambda item: version_sort_key(item.version), reverse=True
             )
         ),
         tuple(skipped),
@@ -879,7 +883,10 @@ def registry_digest(image: str, tag: str, *, registry: str) -> str | None:
         url = f"https://ghcr.io/v2/{image}/manifests/{tag}"
         token = ghcr_token(image)
     elif registry == "dockerhub":
-        url = f"https://registry-1.docker.io/v2/{image}/manifests/{tag}"
+        # Official images (`caddy`, `postgres`) resolve only under the
+        # `library/` path on the registry API; the token must match that scope.
+        path_image = image if "/" in image else f"library/{image}"
+        url = f"https://registry-1.docker.io/v2/{path_image}/manifests/{tag}"
         token = dockerhub_token(image)
     else:
         raise ValueError(f"unsupported digest source: {registry}")
@@ -922,7 +929,11 @@ def ghcr_token(image: str) -> str:
 
 
 def dockerhub_token(image: str) -> str:
-    scope = urllib.parse.quote(f"repository:{image}:pull")
+    # Official images (no owner namespace, e.g. `caddy`, `postgres`) live under
+    # Docker Hub's `library/` namespace. Request that scope explicitly, or the
+    # token comes back with insufficient scope and the manifest HEAD 401s.
+    scope_image = image if "/" in image else f"library/{image}"
+    scope = urllib.parse.quote(f"repository:{scope_image}:pull")
     data = http_json(
         f"https://auth.docker.io/token?service=registry.docker.io&scope={scope}"
     )
@@ -1016,7 +1027,7 @@ def filter_versions(values: list[str], stable_only: bool) -> list[str]:
 
 def parse_version(
     value: str,
-) -> tuple[int, int, int, bool, tuple[tuple[int, object], ...]]:
+) -> tuple[int, int, int, int, bool, tuple[tuple[int, object], ...]]:
     match = SEMVER_RE.match(value)
     if not match:
         raise ValueError(f"unsupported version format: {value}")
@@ -1025,6 +1036,7 @@ def parse_version(
         int(match.group("major")),
         int(match.group("minor")),
         int(match.group("patch")),
+        int(match.group("build") or 0),
         is_prerelease_suffix(suffix),
         prerelease_sort_key(suffix),
     )
@@ -1074,9 +1086,9 @@ def prerelease_sort_key(prerelease: str) -> tuple[tuple[int, object], ...]:
 
 def version_sort_key(
     value: str,
-) -> tuple[int, int, int, int, tuple[tuple[int, object], ...]]:
-    major, minor, patch, prerelease, prerelease_key = parse_version(value)
-    return (major, minor, patch, 0 if prerelease else 1, prerelease_key)
+) -> tuple[int, int, int, int, int, tuple[tuple[int, object], ...]]:
+    major, minor, patch, build, prerelease, prerelease_key = parse_version(value)
+    return (major, minor, patch, build, 0 if prerelease else 1, prerelease_key)
 
 
 def normalize_version(value: str, *, strip_prefix: str = "") -> str:
