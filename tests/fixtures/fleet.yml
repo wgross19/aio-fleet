@@ -1,0 +1,1479 @@
+schema_version: 1
+owner: wgross19
+default_branch: main
+awesome_unraid_repository: wgross19/awesome-unraid
+dashboard:
+  issue_number: 55
+  destination_repos:
+    awesome-unraid:
+      path: /workspace/synthetic/awesome-unraid
+      github_repo: JSONbored/awesome-unraid
+      public: true
+      role: catalog destination
+      description: Community Apps-facing XML and icon catalog for validated AIO source repo changes.
+      catalog_path: /workspace/synthetic/awesome-unraid
+      next_action: Validate catalog state and sync source repo changes only after source validation passes.
+defaults:
+  python_version: "3.13"
+  trunk_org_slug: aethereal
+  publish_platforms: linux/amd64,linux/arm64
+  integration_pytest_args: tests/integration -m integration
+  non_release_paths:
+    - .aio-fleet.yml
+    - README.md
+    - AGENTS.md
+    - docs/**
+    - pyproject.toml
+    - tests/**
+    - .github/**
+    - .trunk/**
+  release_transaction:
+    autopilot: false
+    checkout_policy: standard
+    publish_policy: central-control
+repos:
+  unraid-aio-template:
+    path: /workspace/synthetic/unraid-aio-template
+    public: true
+    catalog_published: false
+    workflow_name: CI / AIO Template
+    app_slug: unraid-aio-template
+    image_name: wgross19/unraid-aio-template
+    docker_cache_scope: unraid-aio-template-image
+    pytest_image_tag: aio-template:pytest
+    publish_profile: template
+    runtime_healthcheck_markers:
+      - "urllib.request.urlopen"
+    release_name: Template
+    previous_tag_command: latest-release-tag
+    upstream_name: AIO Template
+    image_description: Reusable Unraid AIO template image
+    xml_paths:
+      - template-aio.xml
+    catalog_assets:
+      - source: template-aio.xml
+        target: template-aio.xml
+  sure-aio:
+    path: /workspace/synthetic/sure-aio
+    public: true
+    workflow_name: CI / Sure-AIO
+    app_slug: sure-aio
+    image_name: wgross19/sure-aio
+    docker_cache_scope: sure-aio-image
+    pytest_image_tag: sure-aio:pytest
+    publish_profile: upstream-aio-track
+    release_name: Sure-AIO
+    upstream_name: Sure
+    smoke_test:
+      env:
+        SECRET_KEY_BASE: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+        SELF_HOSTED: "true"
+    upstream_monitor:
+      - component: aio
+        name: Sure
+        source: github-releases
+        repo: we-promise/sure
+        image: we-promise/sure
+        digest_source: ghcr
+        dockerfile: Dockerfile
+        version_key: UPSTREAM_VERSION
+        version_strip_prefix: v
+        digest_key: UPSTREAM_IMAGE_DIGEST
+        stable_only: true
+        strategy: pr
+        release_notes_url: https://github.com/we-promise/sure/releases
+      - component: sure-alpha
+        name: Sure Alpha
+        source: github-releases
+        repo: we-promise/sure
+        image: we-promise/sure
+        digest_source: ghcr
+        dockerfile: Dockerfile.alpha
+        version_key: UPSTREAM_VERSION
+        version_strip_prefix: v
+        digest_key: UPSTREAM_IMAGE_DIGEST
+        stable_only: false
+        prerelease_channel: alpha
+        strategy: pr
+        release_notes_url: https://github.com/we-promise/sure/releases
+    image_description:
+      Unraid-first AIO wrapper image for Sure (web, worker, postgres,
+      redis)
+    xml_paths:
+      - sure-aio.xml
+      - sure-aio-alpha.xml
+    catalog_assets:
+      - source: sure-aio.xml
+        target: sure-aio.xml
+      - source: sure-aio-alpha.xml
+        target: sure-aio-alpha.xml
+      - source: screenshots/sure-aio/01-dashboard.png
+        target: screenshots/sure-aio/01-dashboard.png
+      - source: screenshots/sure-aio/02-account-activity.png
+        target: screenshots/sure-aio/02-account-activity.png
+      - source: screenshots/sure-aio/03-budgets.png
+        target: screenshots/sure-aio/03-budgets.png
+      - source: screenshots/sure-aio-alpha/01-login.png
+        target: screenshots/sure-aio-alpha/01-login.png
+      - source: screenshots/sure-aio-alpha/02-account-activity.png
+        target: screenshots/sure-aio-alpha/02-account-activity.png
+      - source: screenshots/sure-aio-alpha/03-budgets.png
+        target: screenshots/sure-aio-alpha/03-budgets.png
+    components:
+      aio:
+        image_name: wgross19/sure-aio
+        dockerfile: Dockerfile
+        upstream_config: upstream.toml
+        docker_cache_scope: sure-aio-image
+        oci_description: Stable Unraid-first Sure AIO image
+        release_suffix: aio
+        floating_tags:
+          - latest
+        xml_paths:
+          - sure-aio.xml
+      sure-alpha:
+        image_name: wgross19/sure-aio-alpha
+        dockerfile: Dockerfile.alpha
+        upstream_config: upstream.toml
+        docker_cache_scope: sure-aio-alpha-image
+        oci_description: Unstable Unraid-first Sure AIO alpha testing image
+        release_policy: registry_only
+        release_history: github_prerelease
+        release_changelog: CHANGELOG.alpha.md
+        release_tag_prefix: sure-alpha/
+        release_suffix: aio
+        registry_revision_arg: AIO_REVISION
+        github_release_latest: false
+        release_customization_notes:
+          - Preserve the Sure AIO alpha import-limit overlay documented in `docs/alpha-lane.md`.
+          - Preserve the strict SureImport preflight/failure overlay until the pinned upstream alpha includes equivalent behavior.
+          - Preserve the route-parity importer overlay for Enhanced NDJSON split/transfer proof packages until upstream carries it.
+          - Keep `SURE_IMPORT_MAX_NDJSON_SIZE_MB` and `SURE_IMPORT_MAX_ROWS` alpha-only.
+          - Do not add dirty-target taxonomy merge as a Unraid template or environment control.
+          - Keep alpha passkey/WebAuthn template controls separate from stable.
+        floating_tags:
+          - latest-alpha
+        smoke_test:
+          enabled: true
+        include_upstream_version_tag: false
+        include_sha_tag: false
+        preserve_tags:
+          - wgross19/sure-aio:latest
+          - ghcr.io/wgross19/sure-aio:latest
+        upstream_version_key: UPSTREAM_VERSION
+        xml_paths:
+          - sure-aio-alpha.xml
+        publish_paths:
+          - README.md
+          - pyproject.toml
+          - rootfs-alpha/**
+          - patches/sure-alpha/**
+          - docs/alpha-lane.md
+          - docs/releases.md
+          - tests/**
+        pytest_image_tag: sure-aio-alpha:pytest
+        pytest_prebuilt_env: AIO_ALPHA_PYTEST_USE_PREBUILT_IMAGE
+        validation:
+          required_targets:
+            - SURE_IMPORT_MAX_NDJSON_SIZE_MB
+            - SURE_IMPORT_MAX_ROWS
+            - WEBAUTHN_RP_ID
+            - WEBAUTHN_ALLOWED_ORIGINS
+          required_field_values:
+            Name: sure-aio-alpha
+            Repository: wgross19/sure-aio-alpha:latest-alpha
+            Beta: "True"
+          required_text_snippets:
+            - Testing / Unstable
+            - Alpha-only
+            - /mnt/user/appdata/sure-aio-alpha
+            - latest-alpha
+          forbidden_text_snippets:
+            - <Name>sure-aio</Name>
+            - <Repository>wgross19/sure-aio:latest</Repository>
+            - /mnt/user/appdata/sure-aio/system
+            - /mnt/user/appdata/sure-aio/postgres
+            - /mnt/user/appdata/sure-aio/redis
+          config_target_requirements:
+            SURE_IMPORT_MAX_NDJSON_SIZE_MB:
+              name_contains: "[Alpha]"
+              description_contains: Alpha-only
+              default: "250"
+              value: "250"
+            SURE_IMPORT_MAX_ROWS:
+              name_contains: "[Alpha]"
+              description_contains: Alpha-only
+              default: "1000000"
+              value: "1000000"
+            WEBAUTHN_RP_ID:
+              name_contains: "[Alpha Auth]"
+              description_contains: Alpha-only
+            WEBAUTHN_ALLOWED_ORIGINS:
+              name_contains: "[Alpha Auth]"
+              description_contains: Alpha-only
+    validation:
+      required_text_fields:
+        - ReadMe
+        - Requires
+        - DonateText
+        - DonateLink
+      required_targets:
+        - ACTIVE_RECORD_ENCRYPTION_DETERMINISTIC_KEY
+        - ACTIVE_RECORD_ENCRYPTION_KEY_DERIVATION_SALT
+        - ACTIVE_RECORD_ENCRYPTION_PRIMARY_KEY
+        - ACTIVE_STORAGE_SERVICE
+        - AI_DEBUG_MODE
+        - ALLOWED_OIDC_DOMAINS
+        - ALPHA_VANTAGE_API_KEY
+        - ALPHA_VANTAGE_MAX_REQUESTS_PER_DAY
+        - ALPHA_VANTAGE_URL
+        - APP_DOMAIN
+        - APP_URL
+        - ASSISTANT_TYPE
+        - AUTH_JIT_MODE
+        - AUTH_LOCAL_ADMIN_OVERRIDE_ENABLED
+        - AUTH_LOCAL_LOGIN_ENABLED
+        - AUTH_PROVIDERS_SOURCE
+        - AUTO_SYNC_ENABLED
+        - AUTO_SYNC_TIME
+        - AUTO_SYNC_TIMEZONE
+        - BINANCE_EGRESS_IP
+        - BINANCE_PUBLIC_URL
+        - BRAND_FETCH_CLIENT_ID
+        - BRAND_FETCH_HIGH_RES_LOGOS
+        - BRAND_NAME
+        - CATEGORIZATION_MODEL
+        - CATEGORIZATION_PROVIDER
+        - CHAT_MODEL
+        - CHAT_PROVIDER
+        - CLOUDFLARE_ACCESS_KEY_ID
+        - CLOUDFLARE_ACCOUNT_ID
+        - CLOUDFLARE_BUCKET
+        - CLOUDFLARE_SECRET_ACCESS_KEY
+        - DB_HOST
+        - DB_PORT
+        - DEFAULT_UI_LAYOUT
+        - EMAIL_SENDER
+        - EMBEDDING_ACCESS_TOKEN
+        - EMBEDDING_DIMENSIONS
+        - EMBEDDING_MODEL
+        - EMBEDDING_URI_BASE
+        - EODHD_API_KEY
+        - EODHD_MAX_REQUESTS_PER_DAY
+        - EODHD_URL
+        - EXCHANGE_RATE_PROVIDER
+        - EXTERNAL_ASSISTANT_AGENT_ID
+        - EXTERNAL_ASSISTANT_ALLOWED_EMAILS
+        - EXTERNAL_ASSISTANT_SESSION_KEY
+        - EXTERNAL_ASSISTANT_TOKEN
+        - EXTERNAL_ASSISTANT_URL
+        - GCS_BUCKET
+        - GCS_KEYFILE
+        - GCS_KEYFILE_JSON
+        - GCS_PROJECT
+        - GENERIC_S3_ACCESS_KEY_ID
+        - GENERIC_S3_BUCKET
+        - GENERIC_S3_ENDPOINT
+        - GENERIC_S3_FORCE_PATH_STYLE
+        - GENERIC_S3_REGION
+        - GENERIC_S3_SECRET_ACCESS_KEY
+        - GITHUB_BUTTON_ICON
+        - GITHUB_BUTTON_LABEL
+        - GITHUB_CLIENT_ID
+        - GITHUB_CLIENT_SECRET
+        - GOOGLE_BUTTON_ICON
+        - GOOGLE_BUTTON_LABEL
+        - GOOGLE_OAUTH_CLIENT_ID
+        - GOOGLE_OAUTH_CLIENT_SECRET
+        - HTTPS_PROXY
+        - HTTP_PROXY
+        - INDEXA_API_TOKEN
+        - LANGFUSE_HOST
+        - LANGFUSE_PUBLIC_KEY
+        - LANGFUSE_REGION
+        - LANGFUSE_SECRET_KEY
+        - LEGAL_PRIVACY_URL
+        - LEGAL_TERMS_URL
+        - LLM_CONTEXT_WINDOW
+        - LLM_JSON_MODE
+        - LLM_MAX_HISTORY_TOKENS
+        - LLM_MAX_ITEMS_PER_CALL
+        - LLM_MAX_RESPONSE_TOKENS
+        - LLM_SYSTEM_PROMPT_RESERVE
+        - LOGTAIL_API_KEY
+        - LOGTAIL_INGESTING_HOST
+        - LUNCHFLOW_DEBUG_RAW
+        - LUNCHFLOW_INCLUDE_PENDING
+        - MCP_API_TOKEN
+        - MCP_USER_EMAIL
+        - MFAPI_URL
+        - NO_PROXY
+        - OIDC_AUTHENTIK_CLIENT_ID
+        - OIDC_AUTHENTIK_CLIENT_SECRET
+        - OIDC_AUTHENTIK_ISSUER
+        - OIDC_AUTHENTIK_REDIRECT_URI
+        - OIDC_BUTTON_ICON
+        - OIDC_BUTTON_LABEL
+        - OIDC_CLIENT_ID
+        - OIDC_CLIENT_SECRET
+        - OIDC_ISSUER
+        - OIDC_KEYCLOAK_CLIENT_ID
+        - OIDC_KEYCLOAK_CLIENT_SECRET
+        - OIDC_KEYCLOAK_ISSUER
+        - OIDC_KEYCLOAK_REDIRECT_URI
+        - OIDC_REDIRECT_URI
+        - ONBOARDING_STATE
+        - OPENAI_ACCESS_TOKEN
+        - OPENAI_MODEL
+        - OPENAI_REQUEST_TIMEOUT
+        - OPENAI_SUPPORTS_PDF_PROCESSING
+        - OPENAI_SUPPORTS_RESPONSES_ENDPOINT
+        - OPENAI_URI_BASE
+        - PLAID_CLIENT_ID
+        - PLAID_ENV
+        - PLAID_EU_CLIENT_ID
+        - PLAID_EU_ENV
+        - PLAID_EU_SECRET
+        - PLAID_INCLUDE_PENDING
+        - PLAID_SECRET
+        - POSTGRES_DB
+        - POSTGRES_PASSWORD
+        - POSTGRES_USER
+        - POSTHOG_HOST
+        - POSTHOG_KEY
+        - PRODUCT_NAME
+        - QDRANT_API_KEY
+        - QDRANT_URL
+        - RAILS_ASSUME_SSL
+        - RAILS_FORCE_SSL
+        - RAILS_LOG_LEVEL
+        - RAILS_MAX_THREADS
+        - REDIS_PASSWORD
+        - REDIS_SENTINEL_HOSTS
+        - REDIS_SENTINEL_MASTER
+        - REDIS_SENTINEL_USERNAME
+        - REDIS_URL
+        - REQUIRE_EMAIL_CONFIRMATION
+        - REQUIRE_INVITE_CODE
+        - S3_ACCESS_KEY_ID
+        - S3_BUCKET
+        - S3_REGION
+        - S3_SECRET_ACCESS_KEY
+        - SECRET_KEY_BASE
+        - SECURITIES_PROVIDER
+        - SECURITIES_PROVIDERS
+        - SELF_HOSTING_ENABLED
+        - SENTRY_DSN
+        - SIDEKIQ_WEB_PASSWORD
+        - SIDEKIQ_WEB_USERNAME
+        - SIMPLEFIN_CC_OVERPAYMENT_HEURISTIC
+        - SIMPLEFIN_DEBUG_RAW
+        - SIMPLEFIN_INCLUDE_PENDING
+        - SKYLIGHT_AUTHENTICATION
+        - SKYLIGHT_ENABLED
+        - SMTP_ADDRESS
+        - SMTP_PASSWORD
+        - SMTP_PORT
+        - SMTP_TLS_ENABLED
+        - SMTP_TLS_SKIP_VERIFY
+        - SMTP_USERNAME
+        - SSL_CA_FILE
+        - SSL_CERT_FILE
+        - SSL_DEBUG
+        - SSL_VERIFY
+        - TIINGO_API_KEY
+        - TIINGO_MAX_REQUESTS_PER_HOUR
+        - TIINGO_URL
+        - TWELVE_DATA_API_KEY
+        - TWELVE_DATA_MAX_REQUESTS_PER_MINUTE
+        - TWELVE_DATA_MIN_REQUEST_INTERVAL
+        - TWELVE_DATA_URL
+        - VECTOR_STORE_PROVIDER
+        - WEB_CONCURRENCY
+        - YAHOO_FINANCE_MAX_RETRIES
+        - YAHOO_FINANCE_MIN_REQUEST_INTERVAL
+        - YAHOO_FINANCE_RETRY_INTERVAL
+        - YAHOO_FINANCE_URL
+      exact_category_tokens:
+        - Productivity
+        - Tools:Utilities
+  simplelogin-aio:
+    path: /workspace/synthetic/simplelogin-aio
+    public: true
+    workflow_name: CI / SimpleLogin AIO
+    app_slug: simplelogin-aio
+    image_name: wgross19/simplelogin-aio
+    docker_cache_scope: simplelogin-aio-image
+    pytest_image_tag: simplelogin-aio:pytest
+    unit_pytest_args: tests/unit
+    publish_profile: upstream-aio-track
+    publish_platforms: linux/amd64
+    release_name: SimpleLogin-AIO
+    upstream_name: SimpleLogin
+    upstream_monitor:
+      - component: aio
+        name: SimpleLogin
+        source: github-tags
+        repo: simple-login/app
+        image: simplelogin/app-ci
+        digest_source: dockerhub
+        dockerfile: Dockerfile
+        version_key: UPSTREAM_VERSION
+        digest_key: UPSTREAM_IMAGE_DIGEST
+        stable_only: true
+        strategy: pr
+        release_notes_url: https://github.com/simple-login/app/releases
+    image_description: Unraid-first AIO wrapper image for SimpleLogin
+    xml_paths:
+      - simplelogin-aio.xml
+    catalog_assets:
+      - source: simplelogin-aio.xml
+        target: simplelogin-aio.xml
+      - source: screenshots/simplelogin-aio/01-login.png
+        target: screenshots/simplelogin-aio/01-login.png
+      - source: screenshots/simplelogin-aio/02-dashboard.png
+        target: screenshots/simplelogin-aio/02-dashboard.png
+      - source: screenshots/simplelogin-aio/03-settings.png
+        target: screenshots/simplelogin-aio/03-settings.png
+    validation:
+      required_text_fields:
+        - ReadMe
+      exact_category_tokens:
+        - Network:Privacy
+        - Network:Web
+        - Tools:Utilities
+      required_targets:
+        - /appdata
+        - /custom-assets
+        - /pgp
+        - "25"
+        - "7777"
+        - ADMIN_EMAIL
+        - ALIAS_AUTOMATIC_DISABLE
+        - ALIAS_DOMAINS
+        - ALIAS_LIMIT
+        - ALLOWED_REDIRECT_DOMAINS
+        - APPLE_API_SECRET
+        - AUTO_GENERATE_PGP
+        - AWS_ACCESS_KEY_ID
+        - AWS_REGION
+        - AWS_SECRET_ACCESS_KEY
+        - BOUNCE_PREFIX
+        - BOUNCE_PREFIX_FOR_REPLY_PHASE
+        - BOUNCE_SUFFIX
+        - BREVO_PASSWORD
+        - BREVO_USERNAME
+        - BUCKET
+        - COINBASE_API_KEY
+        - COINBASE_CHECKOUT_ID
+        - COINBASE_WEBHOOK_SECRET
+        - COINBASE_YEARLY_PRICE
+        - COLOR_LOG
+        - CONNECT_WITH_OIDC_ICON
+        - CONNECT_WITH_PROTON
+        - CONNECT_WITH_PROTON_COOKIE_NAME
+        - CUSTOM_PASSWORD
+        - CUSTOM_RELAYHOST
+        - CUSTOM_USERNAME
+        - DB_URI
+        - DISABLE_ALIAS_SUFFIX
+        - DISABLE_ONBOARDING
+        - DISABLE_REGISTRATION
+        - DKIM_PRIVATE_KEY_PATH
+        - EMAIL_DOMAIN
+        - EMAIL_SERVERS_WITH_PRIORITY
+        - ENABLE_OIDC_SERVER
+        - ENABLE_SPAM_ASSASSIN
+        - ENFORCE_SPF
+        - FACEBOOK_CLIENT_ID
+        - FACEBOOK_CLIENT_SECRET
+        - FIRST_ALIAS_DOMAIN
+        - FLASK_PROFILER_PASSWORD
+        - FLASK_PROFILER_PATH
+        - FLASK_SECRET
+        - GITHUB_CLIENT_ID
+        - GITHUB_CLIENT_SECRET
+        - GMAIL_APP_PASSWORD
+        - GMAIL_USERNAME
+        - GNUPGHOME
+        - GOOGLE_CLIENT_ID
+        - GOOGLE_CLIENT_SECRET
+        - HCAPTCHA_SECRET
+        - HCAPTCHA_SITEKEY
+        - HIBP_API_KEYS
+        - HIBP_SCAN_INTERVAL_DAYS
+        - LANDING_PAGE_URL
+        - LOCAL_FILE_UPLOAD
+        - MACAPP_APPLE_API_SECRET
+        - MAILGUN_PASSWORD
+        - MAILGUN_USERNAME
+        - MAX_NB_EMAIL_FREE_PLAN
+        - NAMESERVERS
+        - NOT_SEND_EMAIL
+        - OIDC_CLIENT_ID
+        - OIDC_CLIENT_SECRET
+        - OIDC_NAME_FIELD
+        - OIDC_SCOPES
+        - OIDC_WELL_KNOWN_URL
+        - OPENID_PRIVATE_KEY_PATH
+        - OPENID_PUBLIC_KEY_PATH
+        - OTHER_ALIAS_DOMAINS
+        - PADDLE_AUTH_CODE
+        - PADDLE_MONTHLY_PRODUCT_ID
+        - PADDLE_PUBLIC_KEY_PATH
+        - PADDLE_VENDOR_ID
+        - PADDLE_YEARLY_PRODUCT_ID
+        - PARTNER_API_TOKEN_SECRET
+        - PGP_SENDER_PRIVATE_KEY_PATH
+        - PLAUSIBLE_DOMAIN
+        - PLAUSIBLE_HOST
+        - POSTFIX_PORT
+        - POSTFIX_SERVER
+        - POSTMASTER
+        - PREMIUM_ALIAS_DOMAINS
+        - PROTONMAIL_TOKEN
+        - PROTON_BASE_URL
+        - PROTON_CLIENT_ID
+        - PROTON_CLIENT_SECRET
+        - PROTON_VALIDATE_CERTS
+        - REDIS_URL
+        - RELAY_MODE
+        - SENTRY_DSN
+        - SENTRY_FRONT_END_DSN
+        - SPAMASSASSIN_HOST
+        - STATUS_PAGE_URL
+        - SUPPORT_EMAIL
+        - SUPPORT_NAME
+        - TEMP_DIR
+        - URL
+        - WORDS_FILE_PATH
+  khoj-aio:
+    path: /workspace/synthetic/khoj-aio
+    public: true
+    workflow_name: CI / Khoj AIO
+    app_slug: khoj-aio
+    image_name: wgross19/khoj-aio
+    docker_cache_scope: khoj-aio-image
+    pytest_image_tag: khoj-aio:pytest
+    publish_profile: changelog-version
+    release_name: Khoj-AIO
+    upstream_name: Khoj
+    upstream_monitor:
+      - component: aio
+        name: Khoj
+        source: github-releases
+        repo: khoj-ai/khoj
+        image: khoj-ai/khoj
+        digest_source: ghcr
+        dockerfile: Dockerfile
+        version_key: UPSTREAM_VERSION
+        digest_key: UPSTREAM_IMAGE_DIGEST
+        stable_only: false
+        strategy: pr
+        release_notes_url: https://github.com/khoj-ai/khoj/releases
+    image_description: Unraid-first AIO wrapper image for Khoj
+    xml_paths:
+      - khoj-aio.xml
+    catalog_assets:
+      - source: khoj-aio.xml
+        target: khoj-aio.xml
+      - source: screenshots/khoj-aio/01-home.png
+        target: screenshots/khoj-aio/01-home.png
+      - source: screenshots/khoj-aio/02-chat.png
+        target: screenshots/khoj-aio/02-chat.png
+      - source: screenshots/khoj-aio/03-settings.png
+        target: screenshots/khoj-aio/03-settings.png
+    validation:
+      required_text_fields:
+        - ReadMe
+      exact_category_tokens:
+        - AI
+        - Productivity
+        - Tools:Utilities
+      required_targets:
+        - /root/.cache/huggingface
+        - /root/.cache/torch/sentence_transformers
+        - /root/.khoj
+        - /var/lib/postgresql/data
+        - /var/run/docker.sock
+        - "42110"
+        - ANTHROPIC_API_KEY
+        - AWS_ACCESS_KEY
+        - AWS_IMAGE_UPLOAD_BUCKET
+        - AWS_SECRET_KEY
+        - AWS_USER_UPLOADED_IMAGES_BUCKET_NAME
+        - E2B_API_KEY
+        - E2B_TEMPLATE
+        - ELEVEN_LABS_API_KEY
+        - EXA_API_KEY
+        - EXA_API_URL
+        - FIRECRAWL_API_KEY
+        - FIRECRAWL_API_URL
+        - GEMINI_API_KEY
+        - GOOGLE_CLIENT_ID
+        - GOOGLE_CLIENT_SECRET
+        - GOOGLE_SEARCH_API_KEY
+        - GOOGLE_SEARCH_ENGINE_ID
+        - GUNICORN_GRACEFUL_TIMEOUT
+        - GUNICORN_KEEP_ALIVE
+        - GUNICORN_TIMEOUT
+        - GUNICORN_WORKERS
+        - KHOJ_ADMIN_EMAIL
+        - KHOJ_ADMIN_PASSWORD
+        - KHOJ_ALLOWED_DOMAIN
+        - KHOJ_ANONYMOUS_MODE
+        - KHOJ_AUTO_READ_WEBPAGE
+        - KHOJ_CDP_URL
+        - KHOJ_DEBUG
+        - KHOJ_DEFAULT_CHAT_MODEL
+        - KHOJ_DJANGO_SECRET_KEY
+        - KHOJ_DOMAIN
+        - KHOJ_EXTRA_ARGS
+        - KHOJ_HOST
+        - KHOJ_LLM_SEED
+        - KHOJ_NON_INTERACTIVE
+        - KHOJ_NO_HTTPS
+        - KHOJ_OPERATOR_ENABLED
+        - KHOJ_OPERATOR_ITERATIONS
+        - KHOJ_RESEARCH_ITERATIONS
+        - KHOJ_SEARXNG_URL
+        - KHOJ_TELEMETRY_DISABLE
+        - KHOJ_TERRARIUM_URL
+        - KHOJ_USE_INTERNAL_POSTGRES
+        - NOTION_OAUTH_CLIENT_ID
+        - NOTION_OAUTH_CLIENT_SECRET
+        - NOTION_REDIRECT_URI
+        - OLOSTEP_API_KEY
+        - OLOSTEP_API_URL
+        - OPENAI_API_KEY
+        - OPENAI_BASE_URL
+        - POSTGRES_DB
+        - POSTGRES_HOST
+        - POSTGRES_PASSWORD
+        - POSTGRES_PORT
+        - POSTGRES_USER
+        - RESEND_API_KEY
+        - RESEND_AUDIENCE_ID
+        - RESEND_EMAIL
+        - SERPER_DEV_API_KEY
+        - TWILIO_ACCOUNT_SID
+        - TWILIO_AUTH_TOKEN
+        - TWILIO_VERIFICATION_SID
+  mem0-aio:
+    path: /workspace/synthetic/mem0-aio
+    public: true
+    workflow_name: CI / Mem0 AIO
+    app_slug: mem0-aio
+    image_name: wgross19/mem0-aio
+    docker_cache_scope: mem0-aio-image
+    pytest_image_tag: mem0-aio:pytest
+    unit_pytest_args: tests/template
+    registry_publish_timeout_seconds: 7200
+    publish_profile: changelog-version
+    release_name: Mem0-AIO
+    upstream_name: Mem0
+    upstream_monitor:
+      - component: aio
+        name: Mem0
+        source: github-releases
+        repo: mem0ai/mem0
+        dockerfile: Dockerfile
+        version_key: UPSTREAM_VERSION
+        stable_only: true
+        strategy: pr
+        release_notes_url: https://github.com/mem0ai/mem0/releases
+        submodule_path: openmemory
+        submodule_remote: origin
+    image_description: Unraid-first AIO wrapper image for Mem0 and OpenMemory
+    checkout_submodules: true
+    release_transaction:
+      checkout_policy: trusted-submodules
+      publish_policy: central-control
+    upstream_commit_paths:
+      - .aio-fleet.yml
+      - Dockerfile
+      - openmemory
+    extra_publish_paths:
+      - openmemory
+      - openmemory/**
+    xml_paths:
+      - mem0-aio.xml
+      - assets/**
+    catalog_assets:
+      - source: mem0-aio.xml
+        target: mem0-aio.xml
+      - source: assets/mem0.jpeg
+        target: icons/mem0.jpeg
+      - source: screenshots/mem0-aio/01-home.png
+        target: screenshots/mem0-aio/01-home.png
+      - source: screenshots/mem0-aio/02-memories.png
+        target: screenshots/mem0-aio/02-memories.png
+      - source: screenshots/mem0-aio/03-settings.png
+        target: screenshots/mem0-aio/03-settings.png
+    validation:
+      required_text_fields:
+        - ReadMe
+      exact_category_tokens:
+        - AI
+        - Productivity
+        - Tools:Utilities
+      required_targets:
+        - /mem0/storage
+        - "3000"
+        - "8765"
+        - API_KEY
+        - CHROMA_HOST
+        - CHROMA_PORT
+        - DATABASE_URL
+        - ELASTICSEARCH_HOST
+        - ELASTICSEARCH_PASSWORD
+        - ELASTICSEARCH_PORT
+        - ELASTICSEARCH_USER
+        - ELASTICSEARCH_USE_SSL
+        - ELASTICSEARCH_VERIFY_CERTS
+        - EMBEDDER_API_KEY
+        - EMBEDDER_BASE_URL
+        - EMBEDDER_DIMENSIONS
+        - EMBEDDER_MODEL
+        - EMBEDDER_PROVIDER
+        - EXPORT_APP_ID
+        - EXPORT_FROM_DATE
+        - EXPORT_TO_DATE
+        - EXPORT_USER_ID
+        - FAISS_PATH
+        - LLM_API_KEY
+        - LLM_BASE_URL
+        - LLM_MODEL
+        - LLM_PROVIDER
+        - MILVUS_DB_NAME
+        - MILVUS_HOST
+        - MILVUS_PORT
+        - MILVUS_TOKEN
+        - NEXT_PUBLIC_API_URL
+        - NEXT_PUBLIC_USER_ID
+        - OLLAMA_BASE_URL
+        - OLLAMA_HOST
+        - OPENAI_API_KEY
+        - OPENSEARCH_HOST
+        - OPENSEARCH_PASSWORD
+        - OPENSEARCH_PORT
+        - OPENSEARCH_USER
+        - OPENSEARCH_USE_SSL
+        - OPENSEARCH_VERIFY_CERTS
+        - PG_DB
+        - PG_HOST
+        - PG_PASSWORD
+        - PG_PORT
+        - PG_USER
+        - QDRANT_API_KEY
+        - QDRANT_HOST
+        - QDRANT_PORT
+        - QDRANT_URL
+        - QDRANT__TELEMETRY_DISABLED
+        - REDIS_URL
+        - USER
+        - WEAVIATE_CLUSTER_URL
+        - WEAVIATE_HOST
+        - WEAVIATE_PORT
+  infisical-aio:
+    path: /workspace/synthetic/infisical-aio
+    public: true
+    workflow_name: CI / Infisical AIO
+    app_slug: infisical-aio
+    image_name: wgross19/infisical-aio
+    docker_cache_scope: infisical-aio-image
+    pytest_image_tag: infisical-aio:pytest
+    unit_pytest_args: tests/template
+    publish_profile: changelog-version
+    release_name: Infisical-AIO
+    upstream_name: Infisical
+    upstream_monitor:
+      - component: aio
+        name: Infisical
+        source: github-releases
+        repo: Infisical/infisical
+        image: infisical/infisical
+        digest_source: dockerhub
+        dockerfile: Dockerfile
+        version_key: UPSTREAM_VERSION
+        digest_key: UPSTREAM_IMAGE_DIGEST
+        stable_only: true
+        strategy: pr
+        release_notes_url: https://github.com/Infisical/infisical/releases
+      - component: mailpit
+        name: Mailpit
+        source: github-releases
+        repo: axllent/mailpit
+        image: axllent/mailpit
+        digest_source: dockerhub
+        dockerfile: Dockerfile
+        version_key: MAILPIT_VERSION
+        digest_key: MAILPIT_IMAGE_DIGEST
+        stable_only: true
+        strategy: pr
+        release_notes_url: https://github.com/axllent/mailpit/releases
+    image_description: Unraid-first AIO wrapper image for Infisical
+    generated_template: true
+    generator_check_command: python3 scripts/generate_infisical_template.py --check
+    upstream_commit_paths:
+      - Dockerfile
+      - infisical-aio.xml
+    xml_paths:
+      - "*.xml"
+      - assets/**
+    catalog_assets:
+      - source: infisical-aio.xml
+        target: infisical-aio.xml
+      - source: assets/app-icon.png
+        target: icons/infisical.png
+      - source: screenshots/infisical-aio/01-login.png
+        target: screenshots/infisical-aio/01-login.png
+      - source: screenshots/infisical-aio/02-dashboard.png
+        target: screenshots/infisical-aio/02-dashboard.png
+      - source: screenshots/infisical-aio/03-project.png
+        target: screenshots/infisical-aio/03-project.png
+    validation:
+      required_text_fields:
+        - ReadMe
+      exact_category_tokens:
+        - Security
+        - Tools:Utilities
+  penpot-aio:
+    path: /workspace/synthetic/penpot-aio
+    public: true
+    catalog_published: true
+    workflow_name: CI / Penpot AIO
+    app_slug: penpot-aio
+    image_name: wgross19/penpot-aio
+    docker_cache_scope: penpot-aio-image
+    pytest_image_tag: penpot-aio:pytest
+    unit_pytest_args: tests/template
+    publish_profile: changelog-version
+    release_name: Penpot AIO
+    upstream_name: Penpot
+    upstream_version_key: PENPOT_VERSION
+    upstream_digest_arg: PENPOT_BACKEND_DIGEST
+    upstream_monitor:
+      - component: frontend
+        name: Penpot Frontend
+        source: github-releases
+        repo: penpot/penpot
+        image: penpotapp/frontend
+        digest_source: dockerhub
+        dockerfile: Dockerfile
+        version_key: PENPOT_VERSION
+        digest_key: PENPOT_FRONTEND_DIGEST
+        stable_only: true
+        strategy: pr
+        release_notes_url: https://github.com/penpot/penpot/releases
+      - component: backend
+        name: Penpot Backend
+        source: github-releases
+        repo: penpot/penpot
+        image: penpotapp/backend
+        digest_source: dockerhub
+        dockerfile: Dockerfile
+        version_key: PENPOT_VERSION
+        digest_key: PENPOT_BACKEND_DIGEST
+        stable_only: true
+        strategy: pr
+        release_notes_url: https://github.com/penpot/penpot/releases
+      - component: exporter
+        name: Penpot Exporter
+        source: github-releases
+        repo: penpot/penpot
+        image: penpotapp/exporter
+        digest_source: dockerhub
+        dockerfile: Dockerfile
+        version_key: PENPOT_VERSION
+        digest_key: PENPOT_EXPORTER_DIGEST
+        stable_only: true
+        strategy: pr
+        release_notes_url: https://github.com/penpot/penpot/releases
+      - component: mcp
+        name: Penpot MCP
+        source: github-releases
+        repo: penpot/penpot
+        image: penpotapp/mcp
+        digest_source: dockerhub
+        dockerfile: Dockerfile
+        version_key: PENPOT_VERSION
+        digest_key: PENPOT_MCP_DIGEST
+        stable_only: true
+        strategy: pr
+        release_notes_url: https://github.com/penpot/penpot/releases
+      - component: mailpit
+        name: Mailpit
+        source: github-releases
+        repo: axllent/mailpit
+        image: axllent/mailpit
+        digest_source: dockerhub
+        dockerfile: Dockerfile
+        version_key: MAILPIT_VERSION
+        digest_key: MAILPIT_IMAGE_DIGEST
+        stable_only: true
+        strategy: pr
+        release_notes_url: https://github.com/axllent/mailpit/releases
+    image_description: Unraid-first AIO wrapper image for Penpot
+    generated_template: true
+    generator_check_command: python3 scripts/generate_penpot_template.py --check
+    upstream_commit_paths:
+      - Dockerfile
+      - penpot-aio.xml
+      - docs/upstream/penpot-config-inventory.json
+    extended_integration:
+      input_name: run_extended_integration
+      description: Run optional external PostgreSQL/Redis/S3/SMTP integration tests
+      pytest_args: tests/integration -m extended_integration
+    xml_paths:
+      - "*.xml"
+      - assets/**
+    catalog_assets:
+      - source: penpot-aio.xml
+        target: penpot-aio.xml
+      - source: assets/app-icon.png
+        target: icons/penpot.png
+      - source: screenshots/penpot-aio/01-login.png
+        target: screenshots/penpot-aio/01-login.png
+      - source: screenshots/penpot-aio/02-projects.png
+        target: screenshots/penpot-aio/02-projects.png
+      - source: screenshots/penpot-aio/03-editor.png
+        target: screenshots/penpot-aio/03-editor.png
+    validation:
+      required_targets:
+        - /appdata
+        - "8080"
+        - "8025"
+        - PENPOT_AIO_DEFAULT_FLAGS
+        - PENPOT_AIO_ENABLE_INTERNAL_POSTGRES
+        - PENPOT_AIO_ENABLE_INTERNAL_REDIS
+        - PENPOT_AIO_ENABLE_MAILPIT
+        - PENPOT_AIO_ENABLE_MCP
+        - PENPOT_AIO_EXTRA_ENV_FILE
+        - PENPOT_AIO_WAIT_TIMEOUT_SECONDS
+        - PENPOT_DATABASE_URI
+        - PENPOT_DATABASE_USERNAME
+        - PENPOT_DATABASE_PASSWORD
+        - PENPOT_FLAGS
+        - PENPOT_MCP_REMOTE_MODE
+        - PENPOT_OBJECTS_STORAGE_BACKEND
+        - PENPOT_PUBLIC_URI
+        - PENPOT_REDIS_URI
+        - PENPOT_SECRET_KEY
+        - PENPOT_SMTP_HOST
+        - PENPOT_TELEMETRY_ENABLED
+      required_text_fields:
+        - ReadMe
+      exact_category_tokens:
+        - Productivity
+        - Tools:Utilities
+  dify-aio:
+    path: /workspace/synthetic/dify-aio
+    public: true
+    catalog_published: true
+    workflow_name: CI / Dify AIO
+    app_slug: dify-aio
+    image_name: wgross19/dify-aio
+    docker_cache_scope: dify-aio-image
+    pytest_image_tag: dify-aio:pytest
+    unit_pytest_args: tests/template
+    publish_profile: dify
+    release_name: Dify AIO
+    upstream_name: Dify
+    upstream_monitor:
+      - component: dify-api
+        name: Dify API
+        source: github-releases
+        repo: langgenius/dify
+        image: langgenius/dify-api
+        digest_source: dockerhub
+        dockerfile: Dockerfile
+        version_key: UPSTREAM_DIFY_VERSION
+        digest_key: UPSTREAM_DIFY_API_DIGEST
+        stable_only: true
+        strategy: pr
+        release_notes_url: https://github.com/langgenius/dify/releases
+      - component: dify-web
+        name: Dify Web
+        source: github-releases
+        repo: langgenius/dify
+        image: langgenius/dify-web
+        digest_source: dockerhub
+        dockerfile: Dockerfile
+        version_key: UPSTREAM_DIFY_VERSION
+        digest_key: UPSTREAM_DIFY_WEB_DIGEST
+        stable_only: true
+        strategy: pr
+        release_notes_url: https://github.com/langgenius/dify/releases
+    image_description: Unraid-first AIO wrapper image for Dify
+    generated_template: true
+    generator_check_command: python3 scripts/generate_dify_template.py --check
+    upstream_commit_paths:
+      - Dockerfile
+      - dify-aio.xml
+      - rootfs/opt/dify-aio/upstream-env-vars.txt
+    extended_integration:
+      input_name: run_extended_integration
+      description: Run sidecar-backed external provider integration tests
+      pytest_args: tests/integration -m extended_integration
+    xml_paths:
+      - "*.xml"
+      - assets/**
+    catalog_assets:
+      - source: dify-aio.xml
+        target: dify-aio.xml
+      - source: assets/app-icon.png
+        target: icons/dify.png
+      - source: screenshots/dify-aio/01-login.png
+        target: screenshots/dify-aio/01-login.png
+      - source: screenshots/dify-aio/02-workspace.png
+        target: screenshots/dify-aio/02-workspace.png
+      - source: screenshots/dify-aio/03-studio.png
+        target: screenshots/dify-aio/03-studio.png
+    validation:
+      required_targets:
+        - /appdata
+        - "8080"
+        - DB_SSL_MODE
+        - DEPLOY_ENV
+        - DIFY_AIO_EXTRA_ENV_FILE
+        - DIFY_AIO_PUBLIC_URL
+        - DIFY_AIO_WAIT_TIMEOUT_SECONDS
+        - DIFY_BIND_ADDRESS
+        - DIFY_ENABLE_SANDBOX
+        - DIFY_USE_INTERNAL_POSTGRES
+        - DIFY_USE_INTERNAL_REDIS
+        - DIFY_WEB_HOST
+        - DIFY_WEB_PORT
+        - NEXT_TELEMETRY_DISABLED
+        - PIP_MIRROR_URL
+        - PLUGIN_DEBUGGING_HOST
+        - PLUGIN_DEBUGGING_PORT
+        - PLUGIN_MAX_PACKAGE_SIZE
+        - PLUGIN_PLATFORM
+        - SENDGRID_API_KEY
+        - TZ
+        - WORKFLOW_NODE_EXECUTION_STORAGE
+      required_text_fields:
+        - ReadMe
+      exact_category_tokens:
+        - AI
+        - Productivity
+        - Tools:Utilities
+    upstream_version_key: UPSTREAM_DIFY_VERSION
+  signoz-aio:
+    path: /workspace/synthetic/signoz-aio
+    public: true
+    workflow_name: CI / SigNoz Suite
+    app_slug: signoz-aio
+    image_name: wgross19/signoz-aio
+    docker_cache_scope: signoz-aio-image
+    pytest_image_tag: signoz-aio:pytest
+    unit_pytest_args: tests/template
+    publish_profile: signoz-suite
+    release_name: SigNoz-AIO
+    check_upstream_name: Check SigNoz Upstream
+    upstream_components:
+      - signoz-aio
+      - signoz-agent
+    upstream_commit_paths:
+      - Dockerfile
+      - components/signoz-agent/Dockerfile
+    upstream_name: SigNoz
+    upstream_monitor:
+      - component: aio
+        name: SigNoz
+        source: github-tags
+        repo: SigNoz/signoz
+        image: signoz/signoz
+        digest_source: dockerhub
+        dockerfile: Dockerfile
+        version_key: UPSTREAM_SIGNOZ_VERSION
+        digest_key: UPSTREAM_SIGNOZ_DIGEST
+        stable_only: true
+        strategy: pr
+        release_notes_url: https://github.com/SigNoz/signoz/releases
+      - component: agent
+        name: OpenTelemetry Collector Contrib
+        source: github-tags
+        repo: open-telemetry/opentelemetry-collector-releases
+        image: otel/opentelemetry-collector-contrib
+        digest_source: dockerhub
+        dockerfile: components/signoz-agent/Dockerfile
+        version_key: UPSTREAM_OTELCOL_VERSION
+        version_strip_prefix: v
+        digest_key: UPSTREAM_OTELCOL_DIGEST
+        stable_only: true
+        strategy: pr
+        release_notes_url: https://github.com/open-telemetry/opentelemetry-collector-releases/releases
+    image_description:
+      Unraid-first AIO wrapper image for SigNoz with internal ClickHouse,
+      ZooKeeper, and OpenTelemetry Collector defaults
+    publish_platforms: linux/amd64
+    upstream_digest_arg: UPSTREAM_SIGNOZ_DIGEST
+    components:
+      aio:
+        xml_paths:
+          - signoz-aio.xml
+        upstream_version_key: UPSTREAM_SIGNOZ_VERSION
+        release_suffix: aio
+        validation:
+          required_targets:
+            - /appdata
+            - /hostfs
+            - /var/lib/docker/containers
+            - /var/run/docker.sock
+            - "4317"
+            - "4318"
+            - "8080"
+            - LOW_CARDINAL_EXCEPTION_GROUPING
+            - OTEL_RESOURCE_ATTRIBUTES
+            - SIGNOZ_AIO_WAIT_TIMEOUT_SECONDS
+            - SIGNOZ_ALERTMANAGER_SIGNOZ_ALERTS_GC__INTERVAL
+            - SIGNOZ_ALERTMANAGER_SIGNOZ_EXTERNAL__URL
+            - SIGNOZ_ALERTMANAGER_SIGNOZ_GLOBAL_RESOLVE__TIMEOUT
+            - SIGNOZ_ALERTMANAGER_SIGNOZ_GLOBAL_SMTP__AUTH__IDENTITY
+            - SIGNOZ_ALERTMANAGER_SIGNOZ_GLOBAL_SMTP__AUTH__PASSWORD
+            - SIGNOZ_ALERTMANAGER_SIGNOZ_GLOBAL_SMTP__AUTH__PASSWORD_FILE
+            - SIGNOZ_ALERTMANAGER_SIGNOZ_GLOBAL_SMTP__AUTH__SECRET
+            - SIGNOZ_ALERTMANAGER_SIGNOZ_GLOBAL_SMTP__AUTH__USERNAME
+            - SIGNOZ_ALERTMANAGER_SIGNOZ_GLOBAL_SMTP__FROM
+            - SIGNOZ_ALERTMANAGER_SIGNOZ_GLOBAL_SMTP__HELLO
+            - SIGNOZ_ALERTMANAGER_SIGNOZ_GLOBAL_SMTP__REQUIRE__TLS
+            - SIGNOZ_ALERTMANAGER_SIGNOZ_GLOBAL_SMTP__SMARTHOST
+            - SIGNOZ_ALERTMANAGER_SIGNOZ_GLOBAL_SMTP__TLS__CA__FILE
+            - SIGNOZ_ALERTMANAGER_SIGNOZ_GLOBAL_SMTP__TLS__CERT__FILE
+            - SIGNOZ_ALERTMANAGER_SIGNOZ_GLOBAL_SMTP__TLS__CONFIG_INSECURE__SKIP__VERIFY
+            - SIGNOZ_ALERTMANAGER_SIGNOZ_GLOBAL_SMTP__TLS__KEY__FILE
+            - SIGNOZ_ALERTMANAGER_SIGNOZ_GLOBAL_SMTP__TLS__MAX__VERSION
+            - SIGNOZ_ALERTMANAGER_SIGNOZ_GLOBAL_SMTP__TLS__MIN__VERSION
+            - SIGNOZ_ALERTMANAGER_SIGNOZ_GLOBAL_SMTP__TLS__SERVER__NAME
+            - SIGNOZ_ALERTMANAGER_SIGNOZ_NFLOG_MAINTENANCE__INTERVAL
+            - SIGNOZ_ALERTMANAGER_SIGNOZ_NFLOG_RETENTION
+            - SIGNOZ_ALERTMANAGER_SIGNOZ_POLL__INTERVAL
+            - SIGNOZ_ALERTMANAGER_SIGNOZ_ROUTE_GROUP__BY
+            - SIGNOZ_ALERTMANAGER_SIGNOZ_ROUTE_GROUP__INTERVAL
+            - SIGNOZ_ALERTMANAGER_SIGNOZ_ROUTE_GROUP__WAIT
+            - SIGNOZ_ALERTMANAGER_SIGNOZ_ROUTE_REPEAT__INTERVAL
+            - SIGNOZ_ALERTMANAGER_SIGNOZ_SILENCES_MAINTENANCE__INTERVAL
+            - SIGNOZ_ALERTMANAGER_SIGNOZ_SILENCES_MAX
+            - SIGNOZ_ALERTMANAGER_SIGNOZ_SILENCES_MAX__SIZE__BYTES
+            - SIGNOZ_ALERTMANAGER_SIGNOZ_SILENCES_RETENTION
+            - SIGNOZ_ANALYTICS_ENABLED
+            - SIGNOZ_ANALYTICS_SEGMENT_KEY
+            - SIGNOZ_APISERVER_LOGGING_EXCLUDED__ROUTES
+            - SIGNOZ_APISERVER_TIMEOUT_DEFAULT
+            - SIGNOZ_APISERVER_TIMEOUT_EXCLUDED__ROUTES
+            - SIGNOZ_APISERVER_TIMEOUT_MAX
+            - SIGNOZ_AUDITOR_BATCH__SIZE
+            - SIGNOZ_AUDITOR_BUFFER__SIZE
+            - SIGNOZ_AUDITOR_FLUSH__INTERVAL
+            - SIGNOZ_AUDITOR_OTLPHTTP_ENDPOINT
+            - SIGNOZ_AUDITOR_OTLPHTTP_INSECURE
+            - SIGNOZ_AUDITOR_OTLPHTTP_RETRY_ENABLED
+            - SIGNOZ_AUDITOR_OTLPHTTP_RETRY_INITIAL__INTERVAL
+            - SIGNOZ_AUDITOR_OTLPHTTP_RETRY_MAX__ELAPSED__TIME
+            - SIGNOZ_AUDITOR_OTLPHTTP_RETRY_MAX__INTERVAL
+            - SIGNOZ_AUDITOR_OTLPHTTP_TIMEOUT
+            - SIGNOZ_AUDITOR_PROVIDER
+            - SIGNOZ_CACHE_MEMORY_MAX__COST
+            - SIGNOZ_CACHE_MEMORY_NUM__COUNTERS
+            - SIGNOZ_CACHE_PROVIDER
+            - SIGNOZ_CACHE_REDIS_DB
+            - SIGNOZ_CACHE_REDIS_HOST
+            - SIGNOZ_CACHE_REDIS_PASSWORD
+            - SIGNOZ_CACHE_REDIS_PORT
+            - SIGNOZ_CLICKHOUSE_HEALTHCHECK_URL
+            - SIGNOZ_CLICKHOUSE_LOGS_DSN
+            - SIGNOZ_CLICKHOUSE_METADATA_DSN
+            - SIGNOZ_CLICKHOUSE_METER_DSN
+            - SIGNOZ_CLICKHOUSE_METRICS_DSN
+            - SIGNOZ_CLICKHOUSE_TRACES_DSN
+            - SIGNOZ_CLOUDINTEGRATION_AGENT_VERSION
+            - SIGNOZ_EMAILING_ENABLED
+            - SIGNOZ_EMAILING_SMTP_ADDRESS
+            - SIGNOZ_EMAILING_SMTP_AUTH_IDENTITY
+            - SIGNOZ_EMAILING_SMTP_AUTH_PASSWORD
+            - SIGNOZ_EMAILING_SMTP_AUTH_SECRET
+            - SIGNOZ_EMAILING_SMTP_AUTH_USERNAME
+            - SIGNOZ_EMAILING_SMTP_FROM
+            - SIGNOZ_EMAILING_SMTP_HELLO
+            - SIGNOZ_EMAILING_SMTP_TLS_CA__FILE__PATH
+            - SIGNOZ_EMAILING_SMTP_TLS_CERT__FILE__PATH
+            - SIGNOZ_EMAILING_SMTP_TLS_ENABLED
+            - SIGNOZ_EMAILING_SMTP_TLS_INSECURE__SKIP__VERIFY
+            - SIGNOZ_EMAILING_SMTP_TLS_KEY__FILE__PATH
+            - SIGNOZ_EMAILING_TEMPLATES_FORMAT_FOOTER_ENABLED
+            - SIGNOZ_EMAILING_TEMPLATES_FORMAT_HEADER_ENABLED
+            - SIGNOZ_EMAILING_TEMPLATES_FORMAT_HEADER_LOGO__URL
+            - SIGNOZ_EMAILING_TEMPLATES_FORMAT_HELP_EMAIL
+            - SIGNOZ_EMAILING_TEMPLATES_FORMAT_HELP_ENABLED
+            - SIGNOZ_ENABLE_HOST_AGENT
+            - SIGNOZ_FLAGGER_CONFIG_BOOLEAN_KAFKA__SPAN__EVAL
+            - SIGNOZ_FLAGGER_CONFIG_BOOLEAN_USE__SPAN__METRICS
+            - SIGNOZ_GATEWAY_URL
+            - SIGNOZ_GLOBAL_EXTERNAL__URL
+            - SIGNOZ_GLOBAL_INGESTION__URL
+            - SIGNOZ_HOST_AGENT_PROMETHEUS_METRICS_PATH
+            - SIGNOZ_HOST_AGENT_PROMETHEUS_SCRAPE_INTERVAL
+            - SIGNOZ_HOST_AGENT_PROMETHEUS_TARGETS
+            - SIGNOZ_IDENTN_APIKEY_ENABLED
+            - SIGNOZ_IDENTN_APIKEY_HEADERS
+            - SIGNOZ_IDENTN_IMPERSONATION_ENABLED
+            - SIGNOZ_IDENTN_TOKENIZER_ENABLED
+            - SIGNOZ_IDENTN_TOKENIZER_HEADERS
+            - SIGNOZ_INSTRUMENTATION_LOGS_LEVEL
+            - SIGNOZ_INSTRUMENTATION_METRICS_ENABLED
+            - SIGNOZ_INSTRUMENTATION_METRICS_READERS_PULL_EXPORTER_PROMETHEUS_HOST
+            - SIGNOZ_INSTRUMENTATION_METRICS_READERS_PULL_EXPORTER_PROMETHEUS_PORT
+            - SIGNOZ_INSTRUMENTATION_TRACES_ENABLED
+            - SIGNOZ_INSTRUMENTATION_TRACES_PROCESSORS_BATCH_EXPORTER_OTLP_ENDPOINT
+            - SIGNOZ_METRICSEXPLORER_TELEMETRYSTORE_THREADS
+            - SIGNOZ_OTEL_COLLECTOR_BATCH_SEND_MAX_SIZE
+            - SIGNOZ_OTEL_COLLECTOR_BATCH_SEND_SIZE
+            - SIGNOZ_OTEL_COLLECTOR_BATCH_TIMEOUT
+            - SIGNOZ_OTEL_COLLECTOR_CLICKHOUSE_CLUSTER
+            - SIGNOZ_OTEL_COLLECTOR_CLICKHOUSE_DSN
+            - SIGNOZ_OTEL_COLLECTOR_CLICKHOUSE_REPLICATION
+            - SIGNOZ_OTEL_COLLECTOR_METER_BATCH_SEND_MAX_SIZE
+            - SIGNOZ_OTEL_COLLECTOR_METER_BATCH_SEND_SIZE
+            - SIGNOZ_OTEL_COLLECTOR_METER_BATCH_TIMEOUT
+            - SIGNOZ_OTEL_COLLECTOR_PPROF_ENDPOINT
+            - SIGNOZ_OTEL_COLLECTOR_SELF_SCRAPE_INTERVAL
+            - SIGNOZ_OTEL_COLLECTOR_TIMEOUT
+            - SIGNOZ_PPROF_ADDRESS
+            - SIGNOZ_PPROF_ENABLED
+            - SIGNOZ_PROMETHEUS_ACTIVE__QUERY__TRACKER_ENABLED
+            - SIGNOZ_PROMETHEUS_ACTIVE__QUERY__TRACKER_MAX__CONCURRENT
+            - SIGNOZ_PROMETHEUS_ACTIVE__QUERY__TRACKER_PATH
+            - SIGNOZ_PROMETHEUS_TIMEOUT
+            - SIGNOZ_QUERIER_CACHE__TTL
+            - SIGNOZ_QUERIER_FLUX__INTERVAL
+            - SIGNOZ_QUERIER_MAX__CONCURRENT__QUERIES
+            - SIGNOZ_RULER_EVAL__DELAY
+            - SIGNOZ_SERVICEACCOUNT_ANALYTICS_ENABLED
+            - SIGNOZ_SERVICEACCOUNT_EMAIL_DOMAIN
+            - SIGNOZ_SQLSTORE_MAX__CONN__LIFETIME
+            - SIGNOZ_SQLSTORE_MAX__OPEN__CONNS
+            - SIGNOZ_SQLSTORE_POSTGRES_DSN
+            - SIGNOZ_SQLSTORE_PROVIDER
+            - SIGNOZ_SQLSTORE_SQLITE_BUSY__TIMEOUT
+            - SIGNOZ_SQLSTORE_SQLITE_MODE
+            - SIGNOZ_SQLSTORE_SQLITE_PATH
+            - SIGNOZ_SQLSTORE_SQLITE_TRANSACTION__MODE
+            - SIGNOZ_STATSREPORTER_COLLECT_IDENTITIES
+            - SIGNOZ_STATSREPORTER_ENABLED
+            - SIGNOZ_STATSREPORTER_INTERVAL
+            - SIGNOZ_TELEMETRYSTORE_CLICKHOUSE_CLUSTER
+            - SIGNOZ_TELEMETRYSTORE_CLICKHOUSE_DSN
+            - SIGNOZ_TELEMETRYSTORE_CLICKHOUSE_SETTINGS_IGNORE__DATA__SKIPPING__INDICES
+            - SIGNOZ_TELEMETRYSTORE_CLICKHOUSE_SETTINGS_MAX__BYTES__TO__READ
+            - SIGNOZ_TELEMETRYSTORE_CLICKHOUSE_SETTINGS_MAX__EXECUTION__TIME
+            - SIGNOZ_TELEMETRYSTORE_CLICKHOUSE_SETTINGS_MAX__EXECUTION__TIME__LEAF
+            - SIGNOZ_TELEMETRYSTORE_CLICKHOUSE_SETTINGS_MAX__RESULT__ROWS
+            - SIGNOZ_TELEMETRYSTORE_CLICKHOUSE_SETTINGS_SECONDARY__INDICES__ENABLE__BULK__FILTERING
+            - SIGNOZ_TELEMETRYSTORE_CLICKHOUSE_SETTINGS_TIMEOUT__BEFORE__CHECKING__EXECUTION__SPEED
+            - SIGNOZ_TELEMETRYSTORE_DIAL__TIMEOUT
+            - SIGNOZ_TELEMETRYSTORE_MAX__IDLE__CONNS
+            - SIGNOZ_TELEMETRYSTORE_MAX__OPEN__CONNS
+            - SIGNOZ_TOKENIZER_JWT_SECRET
+            - SIGNOZ_TOKENIZER_LIFETIME_IDLE
+            - SIGNOZ_TOKENIZER_LIFETIME_MAX
+            - SIGNOZ_TOKENIZER_OPAQUE_GC_INTERVAL
+            - SIGNOZ_TOKENIZER_OPAQUE_TOKEN_MAX__PER__USER
+            - SIGNOZ_TOKENIZER_ROTATION_DURATION
+            - SIGNOZ_TOKENIZER_ROTATION_INTERVAL
+            - SIGNOZ_USER_PASSWORD_INVITE_MAX__TOKEN__LIFETIME
+            - SIGNOZ_USER_PASSWORD_RESET_ALLOW__SELF
+            - SIGNOZ_USER_PASSWORD_RESET_MAX__TOKEN__LIFETIME
+            - SIGNOZ_USER_ROOT_EMAIL
+            - SIGNOZ_USER_ROOT_ENABLED
+            - SIGNOZ_USER_ROOT_ORG_ID
+            - SIGNOZ_USER_ROOT_ORG_NAME
+            - SIGNOZ_USER_ROOT_PASSWORD
+            - SIGNOZ_USE_EXTERNAL_CLICKHOUSE
+            - SIGNOZ_VERSION_BANNER_ENABLED
+            - TZ
+            - ZOO_AUTOPURGE_INTERVAL
+            - ZOO_ENABLE_PROMETHEUS_METRICS
+            - ZOO_PROMETHEUS_METRICS_PORT_NUMBER
+      agent:
+        release_name: SigNoz Agent
+        image_name: wgross19/signoz-agent
+        docker_cache_scope: signoz-agent-image
+        pytest_image_tag: signoz-agent:pytest
+        pytest_build_context: components/signoz-agent
+        integration_pytest_args: tests/integration_agent -m integration
+        context: components/signoz-agent
+        dockerfile: components/signoz-agent/Dockerfile
+        upstream_name: OpenTelemetry Collector Contrib
+        image_description:
+          Unraid-friendly SigNoz OpenTelemetry collector companion
+          for remote and local hosts
+        xml_paths:
+          - signoz-agent.xml
+        upstream_version_key: UPSTREAM_OTELCOL_VERSION
+        release_suffix: agent
+        validation:
+          required_targets:
+            - /appdata
+            - /hostfs
+            - /var/lib/docker/containers
+            - /var/run/docker.sock
+            - "4317"
+            - "4318"
+            - SIGNOZ_AGENT_BATCH_SEND_SIZE
+            - SIGNOZ_AGENT_BATCH_TIMEOUT
+            - SIGNOZ_AGENT_CONFIG_MODE
+            - SIGNOZ_AGENT_CUSTOM_CONFIG_PATH
+            - SIGNOZ_AGENT_DEPLOYMENT_ENVIRONMENT
+            - SIGNOZ_AGENT_DOCKER_COLLECTION_INTERVAL
+            - SIGNOZ_AGENT_ENABLE_DOCKER_LOGS
+            - SIGNOZ_AGENT_ENABLE_DOCKER_METRICS
+            - SIGNOZ_AGENT_ENABLE_HOST_METRICS
+            - SIGNOZ_AGENT_ENDPOINT
+            - SIGNOZ_AGENT_HEADERS
+            - SIGNOZ_AGENT_HEALTH_ENDPOINT
+            - SIGNOZ_AGENT_HOST_COLLECTION_INTERVAL
+            - SIGNOZ_AGENT_INGESTION_KEY
+            - SIGNOZ_AGENT_INSECURE
+            - SIGNOZ_AGENT_LOG_LEVEL
+            - SIGNOZ_AGENT_MEMORY_LIMIT_MIB
+            - SIGNOZ_AGENT_OTLP_GRPC_ENDPOINT
+            - SIGNOZ_AGENT_OTLP_HTTP_ENDPOINT
+            - SIGNOZ_AGENT_PROMETHEUS_METRICS_PATH
+            - SIGNOZ_AGENT_PROMETHEUS_SCRAPE_INTERVAL
+            - SIGNOZ_AGENT_PROMETHEUS_TARGETS
+            - SIGNOZ_AGENT_PROTOCOL
+            - SIGNOZ_AGENT_RESOURCE_ATTRIBUTES
+            - TZ
+    xml_paths:
+      - signoz-aio.xml
+      - signoz-agent.xml
+      - assets/**
+    catalog_assets:
+      - source: signoz-aio.xml
+        target: signoz-aio.xml
+      - source: signoz-agent.xml
+        target: signoz-agent.xml
+      - source: assets/app-icon.png
+        target: icons/signoz.png
+      - source: screenshots/signoz-aio/01-login.png
+        target: screenshots/signoz-aio/01-login.png
+      - source: screenshots/signoz-aio/02-services.png
+        target: screenshots/signoz-aio/02-services.png
+      - source: screenshots/signoz-aio/03-dashboards.png
+        target: screenshots/signoz-aio/03-dashboards.png
+    validation:
+      required_text_fields:
+        - ReadMe
+        - ExtraSearchTerms
+        - Requires
+        - DonateText
+        - DonateLink
+    upstream_version_key: UPSTREAM_SIGNOZ_VERSION
+  nanoclaw-aio:
+    path: /workspace/synthetic/nanoclaw-aio
+    public: true
+    workflow_name: CI / NanoClaw AIO
+    app_slug: nanoclaw-aio
+    image_name: wgross19/nanoclaw-aio
+    docker_cache_scope: nanoclaw-aio-image
+    pytest_image_tag: nanoclaw-aio:pytest
+    unit_pytest_args: tests/template
+    integration_pytest_args: tests/integration -m integration
+    publish_profile: multi-component
+    runtime_supervisor: s6
+    runtime_healthcheck_markers:
+      - 'pgrep -f "dist/index.js"'
+    release_name: NanoClaw-AIO
+    check_upstream_name: Check NanoClaw Upstream
+    upstream_components:
+      - nanoclaw-aio
+      - nanoclaw-agent
+    upstream_commit_paths:
+      - Dockerfile
+      - components/nanoclaw-agent/Dockerfile
+    upstream_name: NanoClaw
+    upstream_monitor:
+      - component: aio
+        name: NanoClaw
+        source: github-releases
+        repo: nanocoai/nanoclaw
+        dockerfile: Dockerfile
+        version_key: UPSTREAM_VERSION
+        commit_key: UPSTREAM_COMMIT
+        stable_only: true
+        strategy: pr
+        release_notes_url: https://github.com/nanocoai/nanoclaw/releases
+      - component: agent
+        name: NanoClaw Agent
+        source: github-releases
+        repo: nanocoai/nanoclaw
+        dockerfile: components/nanoclaw-agent/Dockerfile
+        version_key: UPSTREAM_VERSION
+        commit_key: UPSTREAM_COMMIT
+        stable_only: true
+        strategy: pr
+        release_notes_url: https://github.com/nanocoai/nanoclaw/releases
+    image_description: Telegram-first Unraid AIO wrapper for NanoClaw v2
+    publish_platforms: linux/amd64
+    catalog_assets:
+      - source: nanoclaw-aio.xml
+        target: nanoclaw-aio.xml
+    components:
+      aio:
+        image_name: wgross19/nanoclaw-aio
+        dockerfile: Dockerfile
+        upstream_config: upstream.toml
+        docker_cache_scope: nanoclaw-aio-image
+        oci_description: Telegram-first Unraid AIO wrapper for NanoClaw v2
+        release_suffix: aio
+        floating_tags:
+          - latest
+        upstream_version_key: UPSTREAM_VERSION
+        xml_paths:
+          - nanoclaw-aio.xml
+      agent:
+        image_name: wgross19/nanoclaw-agent
+        dockerfile: components/nanoclaw-agent/Dockerfile
+        context: components/nanoclaw-agent
+        upstream_config: upstream.toml
+        docker_cache_scope: nanoclaw-agent-image
+        oci_description: Helper sandbox image spawned by nanoclaw-aio
+        release_policy: registry_only
+        release_suffix: agent
+        registry_revision_arg: AGENT_REVISION
+        floating_tags:
+          - latest
+        upstream_version_key: UPSTREAM_VERSION
+    validation:
+      required_targets:
+        - /appdata
+        - /var/run/docker.sock
+        - TELEGRAM_BOT_TOKEN
+        - ANTHROPIC_API_KEY
+        - CLAUDE_CODE_OAUTH_TOKEN
+        - ANTHROPIC_AUTH_TOKEN
+        - ANTHROPIC_BASE_URL
+        - ONECLI_URL
+        - ONECLI_API_KEY
+        - CONTAINER_IMAGE
+        - CONTAINER_IMAGE_BASE
+        - CONTAINER_TIMEOUT
+        - IDLE_TIMEOUT
+        - CONTAINER_MAX_OUTPUT_SIZE
+        - MAX_MESSAGES_PER_PROMPT
+        - MAX_CONCURRENT_CONTAINERS
+        - LOG_LEVEL
+        - ASSISTANT_NAME
+        - ASSISTANT_HAS_OWN_NUMBER
+        - NANOCLAW_HOST_APPDATA_DIR
+        - TZ
+      required_text_fields:
+        - ReadMe
+      exact_category_tokens:
+        - AI
+        - Productivity
+        - Network:Messenger
+        - Tools:Utilities

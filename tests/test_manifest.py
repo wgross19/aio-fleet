@@ -7,10 +7,11 @@ import pytest
 from aio_fleet.manifest import ManifestError, load_manifest
 
 ROOT = Path(__file__).resolve().parents[1]
+FIXTURE = ROOT / "tests" / "fixtures" / "fleet.yml"
 
 
 def test_manifest_loads_current_fleet() -> None:
-    manifest = load_manifest(ROOT / "fleet.yml")
+    manifest = load_manifest(FIXTURE)
 
     assert manifest.owner == "wgross19"  # nosec B101
     assert set(manifest.repos) == {  # nosec B101
@@ -28,7 +29,7 @@ def test_manifest_loads_current_fleet() -> None:
 
 
 def test_manifest_records_known_fleet_exceptions() -> None:
-    manifest = load_manifest(ROOT / "fleet.yml")
+    manifest = load_manifest(FIXTURE)
 
     assert manifest.repo("mem0-aio").get("checkout_submodules") is True  # nosec B101
     assert manifest.repo("dify-aio").extended_integration is not None  # nosec B101

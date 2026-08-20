@@ -11,6 +11,9 @@ from aio_fleet.change_scope import (
 )
 from aio_fleet.manifest import load_manifest
 
+ROOT = Path(__file__).resolve().parents[1]
+FIXTURE = ROOT / "tests" / "fixtures" / "fleet.yml"
+
 
 def test_cleanup_scope_allows_retired_shared_and_local_hygiene_paths(
     tmp_path: Path,
@@ -71,7 +74,7 @@ def test_cleanup_scope_keeps_publish_runtime_catalog_and_unknown_paths_full(
 
 
 def test_cleanup_scope_respects_component_publish_path_overrides() -> None:
-    repo = load_manifest(Path("fleet.yml")).repo("sure-aio")
+    repo = load_manifest(FIXTURE).repo("sure-aio")
 
     for path in ("README.md", "pyproject.toml", "docs/releases.md"):
         scope = classify_required_check_scope(repo, [path])
@@ -171,7 +174,7 @@ def test_cleanup_scope_never_fast_paths_publish_targets(tmp_path: Path) -> None:
 
 
 def test_cleanup_scope_keeps_manifest_owned_upstream_config_full() -> None:
-    repo = load_manifest(Path("fleet.yml")).repo("sure-aio")
+    repo = load_manifest(FIXTURE).repo("sure-aio")
 
     scope = classify_required_check_scope(repo, ["upstream.toml"])
 

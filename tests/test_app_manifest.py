@@ -14,10 +14,11 @@ from aio_fleet.app_manifest import (
 from aio_fleet.manifest import ManifestError, load_manifest
 
 ROOT = Path(__file__).resolve().parents[1]
+FIXTURE = ROOT / "tests" / "fixtures" / "fleet.yml"
 
 
 def test_render_app_manifest_exports_sure_control_plane_surface() -> None:
-    repo = load_manifest(ROOT / "fleet.yml").repo("sure-aio")
+    repo = load_manifest(FIXTURE).repo("sure-aio")
 
     content = render_app_manifest(repo)
     rendered = yaml.safe_load(content)
@@ -67,7 +68,7 @@ def test_render_app_manifest_exports_sure_control_plane_surface() -> None:
 
 
 def test_render_app_manifest_quotes_numeric_string_targets() -> None:
-    repo = load_manifest(ROOT / "fleet.yml").repo("mem0-aio")
+    repo = load_manifest(FIXTURE).repo("mem0-aio")
 
     content = render_app_manifest(repo)
 
@@ -76,8 +77,8 @@ def test_render_app_manifest_quotes_numeric_string_targets() -> None:
 
 
 def test_render_app_manifest_uses_prettier_stable_yaml() -> None:
-    dify = render_app_manifest(load_manifest(ROOT / "fleet.yml").repo("dify-aio"))
-    signoz = render_app_manifest(load_manifest(ROOT / "fleet.yml").repo("signoz-aio"))
+    dify = render_app_manifest(load_manifest(FIXTURE).repo("dify-aio"))
+    signoz = render_app_manifest(load_manifest(FIXTURE).repo("signoz-aio"))
 
     assert '    - "*.xml"\n' in dify  # nosec B101
     assert (  # nosec B101

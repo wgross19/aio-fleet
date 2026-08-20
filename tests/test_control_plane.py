@@ -14,12 +14,13 @@ from aio_fleet.control_plane import (
 from aio_fleet.manifest import RepoConfig, load_manifest
 
 ROOT = Path(__file__).resolve().parents[1]
+FIXTURE = ROOT / "tests" / "fixtures" / "fleet.yml"
 
 
 def test_central_check_steps_for_pr_include_policy_and_integration(
     tmp_path: Path,
 ) -> None:
-    repo = _repo_with_path(load_manifest(ROOT / "fleet.yml").repo("sure-aio"), tmp_path)
+    repo = _repo_with_path(load_manifest(FIXTURE).repo("sure-aio"), tmp_path)
     (tmp_path / "tests").mkdir()
     (tmp_path / "aio_fleet").mkdir()
     (tmp_path / "aio_fleet" / "__init__.py").write_text("")
@@ -44,7 +45,7 @@ def test_central_check_steps_for_pr_include_policy_and_integration(
 def test_central_check_steps_keep_pr_integration_when_submodule_checkout_is_missing(
     tmp_path: Path,
 ) -> None:
-    repo = _repo_with_path(load_manifest(ROOT / "fleet.yml").repo("mem0-aio"), tmp_path)
+    repo = _repo_with_path(load_manifest(FIXTURE).repo("mem0-aio"), tmp_path)
     (tmp_path / "tests").mkdir()
     (tmp_path / "openmemory").mkdir()
 
@@ -57,7 +58,7 @@ def test_central_check_steps_keep_pr_integration_when_submodule_checkout_is_miss
 def test_central_check_steps_keep_push_integration_for_submodule_repos(
     tmp_path: Path,
 ) -> None:
-    repo = _repo_with_path(load_manifest(ROOT / "fleet.yml").repo("mem0-aio"), tmp_path)
+    repo = _repo_with_path(load_manifest(FIXTURE).repo("mem0-aio"), tmp_path)
     (tmp_path / "tests").mkdir()
     (tmp_path / "openmemory").mkdir()
 
@@ -70,7 +71,7 @@ def test_central_check_steps_keep_push_integration_for_submodule_repos(
 def test_central_check_steps_use_trusted_python_for_app_tests(
     tmp_path: Path,
 ) -> None:
-    repo = _repo_with_path(load_manifest(ROOT / "fleet.yml").repo("sure-aio"), tmp_path)
+    repo = _repo_with_path(load_manifest(FIXTURE).repo("sure-aio"), tmp_path)
     (tmp_path / "tests").mkdir()
     (tmp_path / "bin").mkdir()
     malicious_python = tmp_path / "bin" / "python"
@@ -94,7 +95,7 @@ def test_central_check_steps_use_trusted_python_for_app_tests(
 
 
 def test_central_check_steps_for_push_include_integration_trunk_and_publish() -> None:
-    repo = load_manifest(ROOT / "fleet.yml").repo("sure-aio")
+    repo = load_manifest(FIXTURE).repo("sure-aio")
 
     steps = central_check_steps(
         repo, event="push", publish=True, publish_component_names=["aio"]
@@ -138,7 +139,7 @@ def test_central_check_steps_for_push_include_integration_trunk_and_publish() ->
 
 
 def test_central_check_steps_validation_only_keeps_publish_context() -> None:
-    repo = load_manifest(ROOT / "fleet.yml").repo("sure-aio")
+    repo = load_manifest(FIXTURE).repo("sure-aio")
 
     steps = central_check_steps(
         repo,
@@ -157,7 +158,7 @@ def test_central_check_steps_validation_only_keeps_publish_context() -> None:
 
 
 def test_central_check_steps_publish_only_skips_app_code() -> None:
-    repo = load_manifest(ROOT / "fleet.yml").repo("sure-aio")
+    repo = load_manifest(FIXTURE).repo("sure-aio")
 
     steps = central_check_steps(
         repo,
@@ -174,7 +175,7 @@ def test_central_check_steps_publish_only_skips_app_code() -> None:
 
 
 def test_central_check_steps_use_mem0_publish_timeout() -> None:
-    repo = load_manifest(ROOT / "fleet.yml").repo("mem0-aio")
+    repo = load_manifest(FIXTURE).repo("mem0-aio")
 
     steps = central_check_steps(
         repo, event="push", publish=True, include_integration=False
@@ -185,7 +186,7 @@ def test_central_check_steps_use_mem0_publish_timeout() -> None:
 
 
 def test_central_check_steps_skip_template_registry_publish() -> None:
-    repo = load_manifest(ROOT / "fleet.yml").repo("unraid-aio-template")
+    repo = load_manifest(FIXTURE).repo("unraid-aio-template")
 
     steps = central_check_steps(repo, event="push", publish=True)
 
@@ -196,7 +197,7 @@ def test_central_check_steps_skip_template_registry_publish() -> None:
 
 
 def test_registry_publish_command_uses_plain_progress() -> None:
-    repo = load_manifest(ROOT / "fleet.yml").repo("mem0-aio")
+    repo = load_manifest(FIXTURE).repo("mem0-aio")
 
     command = registry_publish_command(repo, sha="a" * 40)
 
@@ -211,7 +212,7 @@ def test_registry_publish_command_uses_plain_progress() -> None:
 
 
 def test_central_check_steps_for_push_without_publish_lets_tests_build_image() -> None:
-    repo = load_manifest(ROOT / "fleet.yml").repo("sure-aio")
+    repo = load_manifest(FIXTURE).repo("sure-aio")
 
     steps = central_check_steps(repo, event="push", publish=False)
 
@@ -222,7 +223,7 @@ def test_central_check_steps_for_push_without_publish_lets_tests_build_image() -
 
 
 def test_central_check_steps_publish_signoz_components() -> None:
-    repo = load_manifest(ROOT / "fleet.yml").repo("signoz-aio")
+    repo = load_manifest(FIXTURE).repo("signoz-aio")
 
     steps = central_check_steps(repo, event="workflow_dispatch", publish=True)
 
@@ -241,7 +242,7 @@ def test_central_check_steps_publish_signoz_components() -> None:
 
 
 def test_central_check_steps_can_target_alpha_component_publish() -> None:
-    repo = load_manifest(ROOT / "fleet.yml").repo("sure-aio")
+    repo = load_manifest(FIXTURE).repo("sure-aio")
 
     steps = central_check_steps(
         repo,
@@ -275,7 +276,7 @@ def test_central_check_steps_can_target_alpha_component_publish() -> None:
 
 
 def test_signoz_agent_pytest_build_uses_component_context() -> None:
-    repo = load_manifest(ROOT / "fleet.yml").repo("signoz-aio")
+    repo = load_manifest(FIXTURE).repo("signoz-aio")
 
     steps = central_check_steps(
         repo,
@@ -294,7 +295,7 @@ def test_signoz_agent_pytest_build_uses_component_context() -> None:
 
 
 def test_central_check_steps_can_skip_integration_for_poll_runs() -> None:
-    repo = load_manifest(ROOT / "fleet.yml").repo("mem0-aio")
+    repo = load_manifest(FIXTURE).repo("mem0-aio")
 
     steps = central_check_steps(repo, event="push", include_integration=False)
 
@@ -436,7 +437,7 @@ def test_run_central_trunk_scrubs_secret_environment(
         return subprocess.CompletedProcess(command, 0, "", "")
 
     repo = _repo_with_path(
-        load_manifest(ROOT / "fleet.yml").repo("sure-aio"), repo_path
+        load_manifest(FIXTURE).repo("sure-aio"), repo_path
     )
     monkeypatch.setenv("TRUNK_PATH", str(tmp_path / "trunk"))
     monkeypatch.setenv("AIO_FLEET_TMPDIR", str(tmp_path / "scratch"))
