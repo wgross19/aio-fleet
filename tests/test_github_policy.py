@@ -14,21 +14,9 @@ def test_github_policy_declares_superagent_for_all_fleet_repos() -> None:
     expected_repos = {
         "aio-fleet",
         "awesome-unraid",
-        "unraid-aio-template",
-        "sure-aio",
-        "simplelogin-aio",
-        "khoj-aio",
-        "mem0-aio",
-        "infisical-aio",
-        "penpot-aio",
-        "dify-aio",
-        "signoz-aio",
-        "nanoclaw-aio",
+        "gbrain-aio",
     }
     assert set(repos) == expected_repos  # nosec B101
-    template = repos["unraid-aio-template"]
-    assert template["repository"]["visibility"] == "public"  # nosec B101
-    assert "branch_protection" not in template  # nosec B101
     for name in expected_repos:
         checks = set(repos[name]["required_checks"])
         app_ids = repos[name].get("required_check_app_ids", {})

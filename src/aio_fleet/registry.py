@@ -59,8 +59,16 @@ def compute_registry_tags(
     # Docker Hub namespace (image_name). These can differ (e.g. GitHub
     # wgross19/gbrain-aio, Docker Hub dub19/gbrain-aio). Deriving GHCR from
     # image_name would push to ghcr.io/<dockerhub-owner>/... which does not
-    # exist. Use the GitHub repo path unless an explicit override is given.
-    ghcr_image = (ghcr_image_name or f"ghcr.io/{repo.github_repo}").lower()
+    # exist. Use the GitHub owner + the component's own repo name (the last
+    # path segment of the component image), so multi-component repos get
+    # per-component GHCR packages (e.g. nanoclaw-agent, sure-aio-alpha,
+    # signoz-agent) instead of all colliding on the repo name.
+    github_owner = repo.github_repo.split("/", 1)[0]
+    component_image_repo = image_name.rsplit("/", 1)[-1]
+    ghcr_image = (
+        ghcr_image_name
+        or f"ghcr.io/{github_owner}/{component_image_repo}"
+    ).lower()
     upstream_version = _read_component_upstream_version(repo, component)
     release_package_tag = _release_package_tag(repo, sha=sha, component=component)
     version_tags_allowed = _version_tags_allowed(

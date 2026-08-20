@@ -13,6 +13,7 @@ from aio_fleet.control_plane import registry_publish_command
 from aio_fleet.manifest import RepoConfig, load_manifest
 
 ROOT = Path(__file__).resolve().parents[1]
+FIXTURE = ROOT / "tests" / "fixtures" / "fleet.yml"
 
 
 @pytest.fixture(autouse=True)
@@ -25,7 +26,7 @@ def _git(path: Path, *args: str) -> None:
 
 
 def test_compute_registry_tags_preserves_docker_hub_and_ghcr_tags(monkeypatch) -> None:
-    repo = load_manifest(ROOT / "fleet.yml").repo("sure-aio")
+    repo = load_manifest(FIXTURE).repo("sure-aio")
 
     monkeypatch.setattr(
         registry, "_read_component_upstream_version", lambda *_: "0.7.0"
@@ -51,7 +52,7 @@ def test_compute_registry_tags_preserves_docker_hub_and_ghcr_tags(monkeypatch) -
 
 
 def test_compute_registry_tags_tolerates_missing_release_commit(monkeypatch) -> None:
-    repo = load_manifest(ROOT / "fleet.yml").repo("sure-aio")
+    repo = load_manifest(FIXTURE).repo("sure-aio")
 
     monkeypatch.setattr(
         registry, "_read_component_upstream_version", lambda *_: "0.7.0"
@@ -78,7 +79,7 @@ def test_compute_registry_tags_tolerates_missing_release_commit(monkeypatch) -> 
 
 
 def test_upstream_aio_track_release_tag_matches_changelog(monkeypatch) -> None:
-    repo = load_manifest(ROOT / "fleet.yml").repo("sure-aio")
+    repo = load_manifest(FIXTURE).repo("sure-aio")
     sha = "c" * 40
 
     monkeypatch.setattr(
@@ -101,7 +102,7 @@ def test_upstream_aio_track_release_tag_matches_changelog(monkeypatch) -> None:
 
 
 def test_upstream_aio_track_release_tag_allows_existing_v_prefix(monkeypatch) -> None:
-    repo = load_manifest(ROOT / "fleet.yml").repo("sure-aio")
+    repo = load_manifest(FIXTURE).repo("sure-aio")
     sha = "d" * 40
 
     monkeypatch.setattr(
@@ -124,7 +125,7 @@ def test_upstream_aio_track_release_tag_allows_existing_v_prefix(monkeypatch) ->
 
 
 def test_release_tag_allows_changelog_format_followup(monkeypatch) -> None:
-    repo = load_manifest(ROOT / "fleet.yml").repo("sure-aio")
+    repo = load_manifest(FIXTURE).repo("sure-aio")
     release_sha = "c" * 40
     publish_sha = "d" * 40
 
@@ -174,7 +175,7 @@ def test_release_tag_allows_changelog_format_followup(monkeypatch) -> None:
 def test_registry_sha_tag_required_for_non_publish_manifest_followup(
     monkeypatch,
 ) -> None:
-    repo = load_manifest(ROOT / "fleet.yml").repo("sure-aio")
+    repo = load_manifest(FIXTURE).repo("sure-aio")
     release_sha = "c" * 40
     publish_sha = "d" * 40
 
@@ -222,7 +223,7 @@ def test_registry_sha_tag_required_for_non_publish_manifest_followup(
 
 
 def test_registry_sha_tag_skips_validation_only_followup(monkeypatch) -> None:
-    repo = load_manifest(ROOT / "fleet.yml").repo("simplelogin-aio")
+    repo = load_manifest(FIXTURE).repo("simplelogin-aio")
     release_sha = "c" * 40
     publish_sha = "d" * 40
 
@@ -251,7 +252,7 @@ def test_registry_sha_tag_skips_validation_only_followup(monkeypatch) -> None:
 def test_registry_sha_tag_skips_other_component_release_followup(
     monkeypatch,
 ) -> None:
-    repo = load_manifest(ROOT / "fleet.yml").repo("sure-aio")
+    repo = load_manifest(FIXTURE).repo("sure-aio")
     release_sha = "c" * 40
     publish_sha = "d" * 40
 
@@ -287,7 +288,7 @@ def test_registry_sha_tag_skips_other_component_release_followup(
 def test_sidecar_sha_tag_skips_unrelated_aio_release_followup(
     monkeypatch,
 ) -> None:
-    repo = load_manifest(ROOT / "fleet.yml").repo("signoz-aio")
+    repo = load_manifest(FIXTURE).repo("signoz-aio")
     release_sha = "e" * 40
     publish_sha = "f" * 40
 
@@ -322,7 +323,7 @@ def test_sidecar_sha_tag_skips_unrelated_aio_release_followup(
 
 
 def test_release_tag_rejects_arbitrary_post_release_commit(monkeypatch) -> None:
-    repo = load_manifest(ROOT / "fleet.yml").repo("sure-aio")
+    repo = load_manifest(FIXTURE).repo("sure-aio")
     release_sha = "c" * 40
     publish_sha = "d" * 40
 
@@ -350,7 +351,7 @@ def test_release_tag_rejects_arbitrary_post_release_commit(monkeypatch) -> None:
 def test_release_tag_rejects_changelog_format_subject_with_runtime_changes(
     monkeypatch,
 ) -> None:
-    repo = load_manifest(ROOT / "fleet.yml").repo("sure-aio")
+    repo = load_manifest(FIXTURE).repo("sure-aio")
     release_sha = "c" * 40
     publish_sha = "d" * 40
 
@@ -392,7 +393,7 @@ def test_release_tag_rejects_changelog_format_subject_with_runtime_changes(
 
 
 def test_component_release_tag_uses_component_suffix(monkeypatch) -> None:
-    repo = load_manifest(ROOT / "fleet.yml").repo("signoz-aio")
+    repo = load_manifest(FIXTURE).repo("signoz-aio")
     sha = "e" * 40
 
     monkeypatch.setattr(
@@ -415,7 +416,7 @@ def test_component_release_tag_uses_component_suffix(monkeypatch) -> None:
 
 
 def test_registry_only_component_uses_alpha_floating_tag(monkeypatch) -> None:
-    repo = load_manifest(ROOT / "fleet.yml").repo("sure-aio")
+    repo = load_manifest(FIXTURE).repo("sure-aio")
     sha = "a" * 40
 
     monkeypatch.setattr(
@@ -632,7 +633,7 @@ def test_registry_only_component_sha_tag_skips_helper_followup_without_release_t
 
 
 def test_registry_only_component_release_tag_requires_allowed_sha(monkeypatch) -> None:
-    repo = load_manifest(ROOT / "fleet.yml").repo("sure-aio")
+    repo = load_manifest(FIXTURE).repo("sure-aio")
     sha = "a" * 40
 
     monkeypatch.setattr(
@@ -666,7 +667,7 @@ def test_registry_only_component_release_tag_requires_allowed_sha(monkeypatch) -
 def test_registry_only_component_omits_upstream_tag_when_release_sha_denied(
     monkeypatch,
 ) -> None:
-    base = load_manifest(ROOT / "fleet.yml").repo("sure-aio")
+    base = load_manifest(FIXTURE).repo("sure-aio")
     raw = dict(base.raw)
     components = dict(raw["components"])
     sure_alpha = dict(components["sure-alpha"])
@@ -697,7 +698,7 @@ def test_registry_only_component_omits_upstream_tag_when_release_sha_denied(
 
 
 def test_sure_alpha_and_stable_tags_are_disjoint(monkeypatch) -> None:
-    repo = load_manifest(ROOT / "fleet.yml").repo("sure-aio")
+    repo = load_manifest(FIXTURE).repo("sure-aio")
     sha = "a" * 40
 
     def fake_version(_repo: object, component: str = "aio") -> str:
@@ -741,7 +742,7 @@ def test_sure_alpha_and_stable_tags_are_disjoint(monkeypatch) -> None:
 def test_component_release_tag_rejects_other_component_release_followup(
     monkeypatch,
 ) -> None:
-    repo = load_manifest(ROOT / "fleet.yml").repo("signoz-aio")
+    repo = load_manifest(FIXTURE).repo("signoz-aio")
     release_sha = "e" * 40
     publish_sha = "f" * 40
 
@@ -790,7 +791,7 @@ def test_component_release_tag_rejects_other_component_release_followup(
 def test_component_release_tag_rejects_other_component_runtime_followup(
     monkeypatch,
 ) -> None:
-    repo = load_manifest(ROOT / "fleet.yml").repo("signoz-aio")
+    repo = load_manifest(FIXTURE).repo("signoz-aio")
     release_sha = "e" * 40
     publish_sha = "f" * 40
 
@@ -834,7 +835,7 @@ def test_component_release_tag_rejects_other_component_runtime_followup(
 def test_component_release_tag_allows_centralized_cleanup_followup(
     monkeypatch,
 ) -> None:
-    repo = load_manifest(ROOT / "fleet.yml").repo("nanoclaw-aio")
+    repo = load_manifest(FIXTURE).repo("nanoclaw-aio")
     release_sha = "e" * 40
     publish_sha = "f" * 40
 
@@ -893,7 +894,7 @@ def test_component_release_tag_allows_centralized_cleanup_followup(
 def test_component_release_tag_rejects_cleanup_subject_with_runtime_changes(
     monkeypatch,
 ) -> None:
-    repo = load_manifest(ROOT / "fleet.yml").repo("nanoclaw-aio")
+    repo = load_manifest(FIXTURE).repo("nanoclaw-aio")
     release_sha = "e" * 40
     publish_sha = "f" * 40
 
@@ -941,7 +942,7 @@ def test_component_release_tag_rejects_cleanup_subject_with_runtime_changes(
 
 
 def test_signoz_agent_publish_command_uses_component_context(monkeypatch) -> None:
-    repo = load_manifest(ROOT / "fleet.yml").repo("signoz-aio")
+    repo = load_manifest(FIXTURE).repo("signoz-aio")
 
     monkeypatch.setattr(
         registry, "_read_component_upstream_version", lambda *_: "0.151.0"
@@ -959,7 +960,7 @@ def test_signoz_agent_publish_command_uses_component_context(monkeypatch) -> Non
 
 
 def test_nanoclaw_component_tags_use_paired_release_model(monkeypatch) -> None:
-    repo = load_manifest(ROOT / "fleet.yml").repo("nanoclaw-aio")
+    repo = load_manifest(FIXTURE).repo("nanoclaw-aio")
     sha = "f" * 40
 
     def fake_version(_repo: object, component: str = "aio") -> str:
@@ -991,7 +992,7 @@ def test_nanoclaw_component_tags_use_paired_release_model(monkeypatch) -> None:
 
 
 def test_nanoclaw_agent_publish_command_uses_component_context(monkeypatch) -> None:
-    repo = load_manifest(ROOT / "fleet.yml").repo("nanoclaw-aio")
+    repo = load_manifest(FIXTURE).repo("nanoclaw-aio")
 
     monkeypatch.setattr(
         registry, "_read_component_upstream_version", lambda *_: "v2.0.63"
@@ -1047,7 +1048,7 @@ repos:
 
 
 def test_registry_publish_command_adds_oci_source_annotations() -> None:
-    repo = load_manifest(ROOT / "fleet.yml").repo("sure-aio")
+    repo = load_manifest(FIXTURE).repo("sure-aio")
 
     command = registry_publish_command(repo, sha="a" * 40, component="sure-alpha")
 
@@ -1522,7 +1523,7 @@ def test_registry_verification_caches_successes_in_process(monkeypatch) -> None:
 
 
 def test_changelog_version_profile_uses_latest_changelog_heading(monkeypatch) -> None:
-    repo = load_manifest(ROOT / "fleet.yml").repo("khoj-aio")
+    repo = load_manifest(FIXTURE).repo("khoj-aio")
     sha = "f" * 40
 
     monkeypatch.setattr(
@@ -1550,7 +1551,7 @@ def test_changelog_version_profile_uses_latest_changelog_heading(monkeypatch) ->
 def test_component_release_tag_rejects_cleanup_rename_into_allowed_path(
     monkeypatch,
 ) -> None:
-    repo = load_manifest(ROOT / "fleet.yml").repo("nanoclaw-aio")
+    repo = load_manifest(FIXTURE).repo("nanoclaw-aio")
     release_sha = "e" * 40
     publish_sha = "f" * 40
 

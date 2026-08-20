@@ -10,6 +10,7 @@ from aio_fleet.github_writer import BranchCommitResult
 from aio_fleet.manifest import load_manifest
 
 ROOT = Path(__file__).resolve().parents[1]
+FIXTURE = ROOT / "tests" / "fixtures" / "fleet.yml"
 
 
 def test_upstream_monitor_detects_version_and_digest_update(
@@ -1081,7 +1082,7 @@ repos:
 
 
 def test_nanoclaw_upstream_monitor_updates_aio_and_agent_pins() -> None:
-    repo = load_manifest(ROOT / "fleet.yml").repo("nanoclaw-aio")
+    repo = load_manifest(FIXTURE).repo("nanoclaw-aio")
     configs = upstream.monitor_configs(repo)
 
     assert [config["component"] for config in configs] == ["aio", "agent"]  # nosec B101

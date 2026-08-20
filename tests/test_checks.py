@@ -9,10 +9,11 @@ from aio_fleet import checks
 from aio_fleet.manifest import load_manifest
 
 ROOT = Path(__file__).resolve().parents[1]
+FIXTURE = ROOT / "tests" / "fixtures" / "fleet.yml"
 
 
 def test_check_external_id_uses_repo_sha_and_policy_hash() -> None:
-    repo = load_manifest(ROOT / "fleet.yml").repo("sure-aio")
+    repo = load_manifest(FIXTURE).repo("sure-aio")
 
     external_id = checks.check_external_id(repo, sha="a" * 40, event="push")
 
@@ -21,7 +22,7 @@ def test_check_external_id_uses_repo_sha_and_policy_hash() -> None:
 
 
 def test_check_run_payload_builds_required_check() -> None:
-    repo = load_manifest(ROOT / "fleet.yml").repo("sure-aio")
+    repo = load_manifest(FIXTURE).repo("sure-aio")
 
     payload = checks.check_run_payload(
         repo,
@@ -41,7 +42,7 @@ def test_check_run_payload_builds_required_check() -> None:
 
 
 def test_check_run_payload_rejects_in_progress_conclusion() -> None:
-    repo = load_manifest(ROOT / "fleet.yml").repo("sure-aio")
+    repo = load_manifest(FIXTURE).repo("sure-aio")
 
     with pytest.raises(ValueError, match="conclusion is only valid"):
         checks.check_run_payload(
@@ -54,7 +55,7 @@ def test_check_run_payload_rejects_in_progress_conclusion() -> None:
 
 
 def test_upsert_check_run_updates_matching_external_id(monkeypatch) -> None:
-    repo = load_manifest(ROOT / "fleet.yml").repo("sure-aio")
+    repo = load_manifest(FIXTURE).repo("sure-aio")
     payload = checks.check_run_payload(
         repo,
         sha="d" * 40,
@@ -104,7 +105,7 @@ def test_upsert_check_run_updates_matching_external_id(monkeypatch) -> None:
 
 
 def test_check_run_satisfied_requires_completed_success(monkeypatch) -> None:
-    repo = load_manifest(ROOT / "fleet.yml").repo("sure-aio")
+    repo = load_manifest(FIXTURE).repo("sure-aio")
 
     monkeypatch.setattr(
         checks,
