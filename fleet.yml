@@ -94,6 +94,7 @@ repos:
     publish_profile: changelog-version
     release_name: Honcho AIO
     upstream_name: Honcho
+    upstream_version_key: HONCHO_VERSION
     upstream_monitor:
       - component: honcho
         name: Honcho
