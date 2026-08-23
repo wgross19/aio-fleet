@@ -83,3 +83,24 @@ repos:
         stable_only: true
         strategy: notify
         release_notes_url: https://github.com/caddyserver/caddy/releases
+  honcho-aio:
+    path: ../honcho-aio
+    github_repo: wgross19/honcho-aio
+    public: true
+    app_slug: honcho-aio
+    image_name: dub19/honcho-aio
+    docker_cache_scope: honcho-aio-image
+    pytest_image_tag: honcho-aio:pytest
+    publish_profile: changelog-version
+    release_name: Honcho AIO
+    upstream_name: Honcho
+    upstream_monitor:
+      - component: honcho
+        name: Honcho
+        source: github-tags
+        repo: plastic-labs/honcho
+        version_key: HONCHO_VERSION
+        stable_only: true
+        strategy: pr
+        release_notes_url: https://github.com/plastic-labs/honcho/releases
+    catalog_published: false
