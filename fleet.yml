@@ -103,4 +103,11 @@ repos:
         stable_only: true
         strategy: pr
         release_notes_url: https://github.com/plastic-labs/honcho/releases
-    catalog_published: false
+    catalog_published: true
+    xml_paths:
+      - honcho-aio.xml
+    catalog_assets:
+      - source: honcho-aio.xml
+        target: honcho-aio.xml
+      - source: assets/app-icon.png
+        target: icons/honcho.png
