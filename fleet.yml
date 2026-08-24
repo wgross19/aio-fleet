@@ -122,6 +122,7 @@ repos:
     pytest_image_tag: fastcrw-aio:pytest
     publish_platforms: linux/amd64
     unit_pytest_args: tests -m "not integration"
+    integration_pytest_args: tests/integration -m integration --timeout=600
     publish_profile: changelog-version
     release_name: fastcrw AIO
     upstream_name: crw
