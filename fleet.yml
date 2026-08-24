@@ -138,7 +138,7 @@ repos:
         stable_only: true
         strategy: notify
         release_notes_url: https://github.com/us/crw/releases
-    catalog_published: false
+    catalog_published: true
     xml_paths:
       - fastcrw-aio.xml
     catalog_assets:
