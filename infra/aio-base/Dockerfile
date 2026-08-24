@@ -8,7 +8,7 @@
 # being copy-pasted (on three different versions) into every app Dockerfile. App
 # images consume it as a build stage:
 #
-#   FROM wgross19/aio-base:s6-3.2.1.0 AS aio-base
+#   FROM dub19/aio-base:s6-3.2.1.0 AS aio-base
 #   FROM <upstream>
 #   COPY --from=aio-base /aio-overlay/ /
 #   RUN aio-harden pre && apt-get update && apt-get -y dist-upgrade \

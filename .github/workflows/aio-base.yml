@@ -21,7 +21,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  IMAGE: wgross19/aio-base
+  IMAGE: dub19/aio-base
   TAG: s6-3.2.1.0
 
 jobs:

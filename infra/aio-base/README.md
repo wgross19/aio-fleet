@@ -1,6 +1,6 @@
 # aio-base — shared s6-overlay + hardening stage
 
-`wgross19/aio-base` centralizes the pieces that fleet app runtime images
+`dub19/aio-base` centralizes the pieces that fleet app runtime images
 otherwise copy-paste into their own Dockerfiles:
 
 - the pinned, SHA-verified **s6-overlay** install (today three repos pin three
@@ -18,7 +18,7 @@ Replace the inline s6 download/verify/extract block and the apt-hardening
 preamble with:
 
 ```dockerfile
-FROM wgross19/aio-base:s6-3.2.1.0 AS aio-base
+FROM dub19/aio-base:s6-3.2.1.0 AS aio-base
 
 FROM <upstream-image>
 COPY --from=aio-base /aio-overlay/ /
