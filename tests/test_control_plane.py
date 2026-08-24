@@ -128,7 +128,10 @@ def test_central_check_steps_for_push_include_integration_trunk_and_publish() ->
         "-t",
     ]
     integration = steps[names.index("integration-tests")]
-    assert integration.env == {"AIO_PYTEST_USE_PREBUILT_IMAGE": "true"}  # nosec B101
+    assert integration.env == {
+        "AIO_PYTEST_USE_PREBUILT_IMAGE": "true",
+        "AIO_PYTEST_IMAGE": "sure-aio:pytest",
+    }  # nosec B101
     assert integration.timeout_seconds == 1800  # nosec B101
     publish = steps[names.index("registry-publish")]
     assert publish.stream_output is True  # nosec B101
@@ -265,9 +268,10 @@ def test_central_check_steps_can_target_alpha_component_publish() -> None:
         build.command[build.command.index("-f") + 1] == "Dockerfile.alpha"
     )  # nosec B101
     integration = steps[names.index("integration-tests")]
-    assert integration.env == {  # nosec B101
-        "AIO_ALPHA_PYTEST_USE_PREBUILT_IMAGE": "true"
-    }
+    assert integration.env == {
+        "AIO_ALPHA_PYTEST_USE_PREBUILT_IMAGE": "true",
+        "AIO_PYTEST_IMAGE": "sure-aio-alpha:pytest",
+    }  # nosec B101
     publish = steps[names.index("registry-publish-sure-alpha")]
     assert publish.command[-2:] == ["--component", "sure-alpha"]  # nosec B101
     release = steps[names.index("github-prerelease-sure-alpha")]

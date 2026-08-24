@@ -484,6 +484,7 @@ def _prebuilt_pytest_environment(
             env_name = "AIO_PYTEST_USE_PREBUILT_IMAGE"
         if env_name:
             env[env_name] = "true"
+            env.setdefault("AIO_PYTEST_IMAGE", image_tag)
     return env
 
 
