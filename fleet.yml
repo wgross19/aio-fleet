@@ -112,3 +112,36 @@ repos:
         target: honcho-aio.xml
       - source: assets/app-icon.png
         target: icons/honcho.png
+  fastcrw-aio:
+    path: ../fastcrw-aio
+    github_repo: wgross19/fastcrw-aio
+    public: true
+    app_slug: fastcrw-aio
+    image_name: dub19/fastcrw-aio
+    docker_cache_scope: fastcrw-aio-image
+    pytest_image_tag: fastcrw-aio:pytest
+    publish_platforms: linux/amd64
+    unit_pytest_args: tests -m "not integration"
+    publish_profile: changelog-version
+    release_name: fastcrw AIO
+    upstream_name: crw
+    upstream_version_key: CRW_VERSION
+    image_description: Unraid-first AIO wrapper image for crw (crw-server, LightPanda)
+    upstream_monitor:
+      - component: crw
+        name: crw
+        source: github-tags
+        repo: us/crw
+        dockerfile: Dockerfile
+        version_key: CRW_VERSION
+        stable_only: true
+        strategy: notify
+        release_notes_url: https://github.com/us/crw/releases
+    catalog_published: false
+    xml_paths:
+      - fastcrw-aio.xml
+    catalog_assets:
+      - source: fastcrw-aio.xml
+        target: fastcrw-aio.xml
+      - source: assets/app-icon.png
+        target: icons/fastcrw-aio.png
