@@ -101,6 +101,7 @@ repos:
         source: github-tags
         repo: plastic-labs/honcho
         version_key: HONCHO_VERSION
+        commit_key: HONCHO_GIT_SHA
         stable_only: true
         strategy: pr
         release_notes_url: https://github.com/plastic-labs/honcho/releases
