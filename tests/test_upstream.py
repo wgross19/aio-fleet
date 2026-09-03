@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import io
 import subprocess
+import urllib.error
 from pathlib import Path
 
 import pytest
@@ -1272,3 +1274,240 @@ repos:
     pytest_image_tag: example-aio:pytest
 """)
     return manifest
+
+
+# ---------------------------------------------------------------------------
+# Tarball sha pin (github-tags tarball_sha_key) — the 9 pinned specs.
+# Contract under test: fail-loud fetch (named ValueError), fail-closed caller
+# (blocked update, no PR), compute only on pending strategy=pr updates,
+# sha drift without a version bump blocks for human review.
+# ---------------------------------------------------------------------------
+
+
+def _tarball_fixture(tmp_path: Path, *, strategy: str = "pr") -> tuple[Path, Path]:
+    repo_path = tmp_path / "repo"
+    repo_path.mkdir()
+    (repo_path / "Dockerfile").write_text(
+        "ARG UPSTREAM_VERSION=1.0.0\n"
+        "ARG UPSTREAM_TARBALL_SHA=0" + "a" * 63 + "\n"
+    )
+    manifest = tmp_path / "fleet.yml"
+    manifest.write_text(f"""
+owner: wgross19
+repos:
+  example-aio:
+    path: {repo_path}
+    public: true
+    app_slug: example-aio
+    image_name: wgross19/example-aio
+    docker_cache_scope: example-aio-image
+    pytest_image_tag: example-aio:pytest
+    upstream_monitor:
+      - component: aio
+        name: Example
+        source: github-tags
+        repo: example/app
+        dockerfile: Dockerfile
+        version_key: UPSTREAM_VERSION
+        tarball_sha_key: UPSTREAM_TARBALL_SHA
+        stable_only: true
+        strategy: {strategy}
+""")
+    return repo_path, manifest
+
+
+class _FakeResponse(io.BytesIO):
+    pass
+
+
+def test_tarball_sha_happy_path_computes_and_writes_both_args(
+    tmp_path: Path, monkeypatch
+) -> None:
+    repo_path, manifest = _tarball_fixture(tmp_path)
+    dockerfile = repo_path / "Dockerfile"
+
+    monkeypatch.setattr(
+        upstream, "latest_github_tag", lambda *_args, **_kwargs: "1.1.0"
+    )
+    monkeypatch.setattr(
+        upstream, "resolve_github_tarball_sha", lambda *_a, **_kw: "b" * 64
+    )
+
+    result = upstream.monitor_repo(
+        load_manifest(manifest).repo("example-aio"), write=True
+    )[0]
+
+    assert result.version_update is True  # nosec B101
+    assert result.tarball_sha_update is True  # nosec B101
+    assert result.latest_tarball_sha == "b" * 64  # nosec B101
+    assert not result.blocked  # nosec B101
+    assert "ARG UPSTREAM_VERSION=1.1.0" in dockerfile.read_text()  # nosec B101
+    assert f"ARG UPSTREAM_TARBALL_SHA={'b' * 64}" in dockerfile.read_text()  # nosec B101
+
+
+def test_tarball_sha_fetch_404_blocks_and_never_writes(tmp_path: Path, monkeypatch) -> None:
+    repo_path, manifest = _tarball_fixture(tmp_path)
+    dockerfile = repo_path / "Dockerfile"
+
+    monkeypatch.setattr(
+        upstream, "latest_github_tag", lambda *_args, **_kwargs: "1.1.0"
+    )
+
+    def _raise_404(*_args, **_kwargs):
+        raise ValueError("archive fetch failed for example/app@1.1.0: HTTP 404 Not Found")
+
+    monkeypatch.setattr(upstream, "resolve_github_tarball_sha", _raise_404)
+
+    result = upstream.monitor_repo(
+        load_manifest(manifest).repo("example-aio"), write=True
+    )[0]
+
+    assert result.blocked is True  # nosec B101
+    assert "404" in result.blocked_reason  # nosec B101
+    # Fail closed: version stays pending, NO PR can open, Dockerfile untouched.
+    assert result.latest_tarball_sha == "0" + "a" * 63  # nosec B101
+    assert "ARG UPSTREAM_VERSION=1.0.0" in dockerfile.read_text()  # nosec B101
+
+
+def test_tarball_sha_fetch_timeout_blocks_with_named_reason(
+    tmp_path: Path, monkeypatch
+) -> None:
+    repo_path, manifest = _tarball_fixture(tmp_path)
+
+    monkeypatch.setattr(
+        upstream, "latest_github_tag", lambda *_args, **_kwargs: "1.1.0"
+    )
+
+    def _raise_timeout(*_args, **_kwargs):
+        raise urllib.error.URLError("timed out")
+
+    monkeypatch.setattr(
+        upstream,
+        "resolve_github_tarball_sha",
+        lambda *_a, **_kw: (_ for _ in ()).throw(urllib.error.URLError("timed out")),
+    )
+    del _raise_timeout
+
+    result = upstream.monitor_repo(load_manifest(manifest).repo("example-aio"))[0]
+
+    assert result.blocked is True  # nosec B101
+    assert "timed out" in result.blocked_reason  # nosec B101
+
+
+def test_tarball_sha_empty_tarball_rejected(tmp_path: Path, monkeypatch) -> None:
+    class _EmptyResp(io.BytesIO):
+        pass
+
+    monkeypatch.setattr(
+        upstream.urllib.request,
+        "urlopen",
+        lambda *_a, **_kw: _EmptyResp(b""),
+    )
+    with pytest.raises(ValueError, match="empty"):
+        upstream.resolve_github_tarball_sha("example/app", "v1.0.0")
+
+
+def test_resolve_github_tarball_sha_fetches_and_hashes(
+    tmp_path: Path, monkeypatch
+) -> None:
+    payload = b"tarball-bytes"
+    captured: dict[str, str] = {}
+
+    class _Resp(io.BytesIO):
+        pass
+
+    def _fake_urlopen(request, timeout=None):  # noqa: ARG001 - signature mirror
+        captured["url"] = request.full_url
+        return _Resp(payload)
+
+    monkeypatch.setattr(upstream.urllib.request, "urlopen", _fake_urlopen)
+
+    digest = upstream.resolve_github_tarball_sha("example/app", "v1.1.0")
+
+    import hashlib
+
+    assert digest == hashlib.sha256(payload).hexdigest()  # nosec B101
+    assert captured["url"] == "https://github.com/example/app/archive/refs/tags/v1.1.0.tar.gz"  # nosec B101
+
+
+def test_no_sha_fetch_when_no_update_pending(tmp_path: Path, monkeypatch) -> None:
+    repo_path, manifest = _tarball_fixture(tmp_path)
+
+    monkeypatch.setattr(
+        upstream, "latest_github_tag", lambda *_args, **_kwargs: "1.0.0"
+    )
+    calls: list[str] = []
+
+    def _spy(*_args, **_kwargs):
+        calls.append("fetch")
+        return "c" * 64
+
+    monkeypatch.setattr(upstream, "resolve_github_tarball_sha", _spy)
+
+    result = upstream.monitor_repo(load_manifest(manifest).repo("example-aio"))[0]
+
+    assert calls == []  # nosec B101 — perf guard: no 7MB download without an update
+    assert result.updates_available is False  # nosec B101
+    assert result.version_update is False  # nosec B101
+
+
+def test_sha_drift_without_version_bump_blocks_for_human_review(
+    tmp_path: Path, monkeypatch
+) -> None:
+    repo_path, manifest = _tarball_fixture(tmp_path)
+    # Drift check is opt-in (it downloads the archive every steady-state run).
+    manifest.write_text(manifest.read_text().replace(
+        "        strategy: pr\n", "        strategy: pr\n        tarball_sha_drift_check: true\n"
+    ))
+
+    monkeypatch.setattr(
+        upstream, "latest_github_tag", lambda *_args, **_kwargs: "1.0.0"
+    )
+    monkeypatch.setattr(
+        upstream, "resolve_github_tarball_sha", lambda *_a, **_kw: "d" * 64
+    )
+
+    result = upstream.monitor_repo(load_manifest(manifest).repo("example-aio"))[0]
+
+    assert result.blocked is True  # nosec B101
+    assert "drift" in result.blocked_reason  # nosec B101
+    assert "manual review" in result.blocked_reason  # nosec B101
+    assert result.updates_available is False  # nosec B101 — no auto-PR on drift
+
+
+def test_tarball_sha_compute_skipped_for_notify_strategy(
+    tmp_path: Path, monkeypatch
+) -> None:
+    repo_path, manifest = _tarball_fixture(tmp_path, strategy="notify")
+
+    monkeypatch.setattr(
+        upstream, "latest_github_tag", lambda *_args, **_kwargs: "1.1.0"
+    )
+    calls: list[str] = []
+
+    def _spy(*_args, **_kwargs):
+        calls.append("fetch")
+        return "c" * 64
+
+    monkeypatch.setattr(upstream, "resolve_github_tarball_sha", _spy)
+
+    result = upstream.monitor_repo(load_manifest(manifest).repo("example-aio"))[0]
+
+    assert calls == []  # nosec B101 — notify never downloads the archive
+    assert result.version_update is True  # nosec B101
+    assert result.tarball_sha_update is False  # nosec B101
+
+
+def test_write_arg_tarball_missing_arg_raises_loudly(tmp_path: Path) -> None:
+    dockerfile = tmp_path / "Dockerfile"
+    dockerfile.write_text("ARG OTHER=1\n")
+    with pytest.raises(ValueError, match="unable to update ARG"):
+        upstream.write_arg(dockerfile, "CRW_TARBALL_SHA256", "d" * 64)
+
+
+def test_tarball_sha_regex_guard_accepts_hex_rejects_other() -> None:
+    import hashlib
+
+    assert upstream.TARBALL_SHA_RE.fullmatch(hashlib.sha256(b"x" * 10).hexdigest())
+    assert not upstream.TARBALL_SHA_RE.fullmatch("zz")
+    assert not upstream.TARBALL_SHA_RE.fullmatch("a" * 63)  # too short

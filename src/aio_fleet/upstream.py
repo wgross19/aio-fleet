@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -72,6 +73,10 @@ class UpstreamMonitorResult:
     current_commit: str = ""
     latest_commit: str = ""
     commit_update: bool = False
+    tarball_sha_key: str = ""
+    current_tarball_sha: str = ""
+    latest_tarball_sha: str = ""
+    tarball_sha_update: bool = False
     submodule_path: str = ""
     submodule_ref: str = ""
     skipped_versions: tuple[dict[str, str], ...] = ()
@@ -80,7 +85,12 @@ class UpstreamMonitorResult:
 
     @property
     def updates_available(self) -> bool:
-        return self.version_update or self.digest_update or self.commit_update
+        return (
+            self.version_update
+            or self.digest_update
+            or self.commit_update
+            or self.tarball_sha_update
+        )
 
     @property
     def blocked(self) -> bool:
@@ -113,6 +123,10 @@ def _write_monitor_results(
                 write_arg(result.dockerfile, result.digest_key, result.latest_digest)
             if result.commit_key and result.latest_commit:
                 write_arg(result.dockerfile, result.commit_key, result.latest_commit)
+            if result.tarball_sha_key and result.latest_tarball_sha:
+                write_arg(
+                    result.dockerfile, result.tarball_sha_key, result.latest_tarball_sha
+                )
             _reset_registry_revision(repo, result)
             _update_release_history_changelog(repo, result)
             if result.version_update:
@@ -424,6 +438,71 @@ def evaluate_monitor(repo: RepoConfig, config: dict[str, Any]) -> UpstreamMonito
             resolve_github_commit(str(config["repo"]), selected_tag) or current_commit
         )
 
+    tarball_sha_key = str(config.get("tarball_sha_key", "")).strip()
+    tarball_url_template = str(config.get("tarball_url_template", "")).strip()
+    current_tarball_sha = read_arg(dockerfile, tarball_sha_key) if tarball_sha_key else ""
+    latest_tarball_sha = current_tarball_sha
+    tarball_sha_blocked_reason = ""
+    if (
+        tarball_sha_key
+        and latest_version != current_version
+        and strategy == "pr"
+        and source == "github-tags"
+    ):
+        # Compute only when a real update is pending AND the strategy will open a
+        # PR: an archive download per scheduled run would be 7MB per repo per run.
+        selected_tag = next(
+            (c.tag for c in release_candidates if c.version == latest_version),
+            latest_version,
+        )
+        try:
+            if tarball_url_template:
+                latest_tarball_sha = fetch_tarball_sha(
+                    tarball_url_template.format(tag=selected_tag),
+                    label=f"{repo.name}:{selected_tag}",
+                )
+            else:
+                latest_tarball_sha = resolve_github_tarball_sha(
+                    str(config["repo"]), selected_tag
+                )
+        except (ValueError, urllib.error.URLError) as exc:
+            # Fail closed: never open a PR carrying a stale sha. The version
+            # update stays pending; the alert names the cause via blocked_reason.
+            tarball_sha_blocked_reason = f"tarball sha fetch failed: {exc}"
+            latest_tarball_sha = current_tarball_sha
+    elif (
+        tarball_sha_key
+        and latest_version == current_version
+        and current_tarball_sha
+        and strategy == "pr"
+        and source == "github-tags"
+        and bool(config.get("tarball_sha_drift_check", False))
+    ):
+        # Sha drift without a version bump: a re-tagged release or tampering.
+        # Neither deserves an automatic PR — both get a human look. Opt-in per
+        # component because it downloads the archive on every steady-state run;
+        # enable only where that cost is acceptable.
+        selected_tag = next(
+            (c.tag for c in release_candidates if c.version == latest_version),
+            latest_version,
+        )
+        try:
+            if tarball_url_template:
+                drift_sha = fetch_tarball_sha(
+                    tarball_url_template.format(tag=selected_tag),
+                    label=f"{repo.name}:{selected_tag}",
+                )
+            else:
+                drift_sha = resolve_github_tarball_sha(str(config["repo"]), selected_tag)
+            if drift_sha != current_tarball_sha:
+                tarball_sha_blocked_reason = (
+                    f"tarball sha drift for {selected_tag} without a version bump: "
+                    "re-tagged release or tampering; manual review required"
+                )
+        except (ValueError, urllib.error.URLError) as exc:
+            # A failed drift probe must not block the (already steady) state.
+            pass
+
     return UpstreamMonitorResult(
         repo=repo.name,
         component=str(config.get("component", "aio")),
@@ -443,6 +522,12 @@ def evaluate_monitor(repo: RepoConfig, config: dict[str, Any]) -> UpstreamMonito
         current_commit=current_commit,
         latest_commit=latest_commit,
         commit_update=bool(commit_key) and latest_commit != current_commit,
+        tarball_sha_key=tarball_sha_key,
+        current_tarball_sha=current_tarball_sha,
+        latest_tarball_sha=latest_tarball_sha,
+        tarball_sha_update=bool(tarball_sha_key)
+        and latest_tarball_sha != current_tarball_sha,
+        blocked_reason=tarball_sha_blocked_reason,
         release_notes_url=str(config.get("release_notes_url", "")).strip()
         or default_release_notes_url(config),
         submodule_path=str(config.get("submodule_path", "")).strip(),
@@ -656,6 +741,75 @@ def resolve_github_commit(repo: str, tag: str) -> str:
         if isinstance(inner, dict) and inner.get("sha"):
             return str(inner["sha"]).strip()
     return sha
+
+
+TARBALL_SHA_RE = re.compile(r"^[0-9a-f]{64}$")
+# GitHub archive tarballs are not contractually byte-stable, but a PR consumes
+# the sha it computed moments earlier; no long-lived sha crosses that boundary.
+_ARCHIVE_TIMEOUT_SECONDS = 60
+_ARCHIVE_ATTEMPTS = 3
+
+
+def fetch_tarball_sha(url: str, *, label: str) -> str:
+    """Fetch an archive URL and return its sha256. Fail-loud: see
+    resolve_github_tarball_sha for the contract and rationale."""
+    request = urllib.request.Request(
+        url,
+        headers={
+            "User-Agent": "aio-fleet",
+            "Accept": "application/octet-stream",
+        },
+    )
+    last_error: Exception | None = None
+    data = b""
+    for attempt in range(_ARCHIVE_ATTEMPTS):
+        try:
+            with urllib.request.urlopen(  # nosec B310
+                request, timeout=_ARCHIVE_TIMEOUT_SECONDS
+            ) as response:
+                data = response.read()
+            break
+        except urllib.error.HTTPError as exc:
+            last_error = exc
+            if exc.code < 500 or attempt == _ARCHIVE_ATTEMPTS - 1:
+                raise ValueError(
+                    f"archive fetch failed for {label}: HTTP {exc.code} {exc.reason}"
+                ) from exc
+        except urllib.error.URLError as exc:
+            last_error = exc
+            if attempt == _ARCHIVE_ATTEMPTS - 1:
+                raise ValueError(
+                    f"archive fetch failed for {label}: {exc.reason}"
+                ) from exc
+        time.sleep(2**attempt)
+    if not data:
+        detail = str(last_error) if last_error else "empty body after retries"
+        raise ValueError(f"archive fetch failed for {label}: {detail}")
+    digest = hashlib.sha256(data).hexdigest()
+    if not TARBALL_SHA_RE.fullmatch(digest):
+        raise ValueError(
+            f"archive fetch failed for {label}: malformed sha256 {digest!r}"
+        )
+    return digest
+
+
+def resolve_github_tarball_sha(repo: str, tag: str) -> str:
+    """Compute the sha256 of a GitHub release tarball for a tag.
+
+    Contract (deliberately different from resolve_github_commit): fail-loud.
+    Returns the 64-char lowercase hex digest or raises ValueError naming the
+    cause. Never returns empty string on failure — the CALLER decides whether
+    a failed fetch blocks the update (fail-closed) or keeps the current pin.
+    Callers must catch ValueError and urllib.error.URLError only.
+
+    Rationale: a silently-empty sha would flow through _write_monitor_results
+    as a skipped digest write and open a version-only PR with a stale pin;
+    the sha mismatch would only surface as a failed docker build later.
+    """
+    if not tag:
+        raise ValueError("tarball sha requires a tag; got empty")
+    url = f"https://github.com/{repo}/archive/refs/tags/{urllib.parse.quote(tag)}.tar.gz"
+    return fetch_tarball_sha(url, label=f"{repo}@{tag}")
 
 
 def latest_github_release(
@@ -1129,6 +1283,7 @@ def result_dict(result: UpstreamMonitorResult) -> dict[str, object]:
         "latest_digest": result.latest_digest,
         "version_update": result.version_update,
         "digest_update": result.digest_update,
+        "tarball_sha_update": bool(getattr(result, "tarball_sha_update", False)),
         "updates_available": result.updates_available,
         "dockerfile": str(result.dockerfile),
         "release_notes_url": result.release_notes_url,
