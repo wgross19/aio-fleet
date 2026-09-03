@@ -1511,3 +1511,63 @@ def test_tarball_sha_regex_guard_accepts_hex_rejects_other() -> None:
     assert upstream.TARBALL_SHA_RE.fullmatch(hashlib.sha256(b"x" * 10).hexdigest())
     assert not upstream.TARBALL_SHA_RE.fullmatch("zz")
     assert not upstream.TARBALL_SHA_RE.fullmatch("a" * 63)  # too short
+
+
+def test_upstream_body_inlines_release_notes(tmp_path: Path, monkeypatch) -> None:
+    repo_path, manifest = _tarball_fixture(tmp_path)
+    manifest.write_text(manifest.read_text().replace(
+        "        stable_only: true\n",
+        "        stable_only: true\n        release_notes_url: https://github.com/example/app/releases\n",
+    ))
+    (repo_path / "Dockerfile").write_text(
+        "ARG UPSTREAM_VERSION=1.0.0\nARG UPSTREAM_TARBALL_SHA=" + "a" * 64 + "\n"
+    )
+
+    monkeypatch.setattr(
+        upstream, "latest_github_tag", lambda *_args, **_kwargs: "1.1.0"
+    )
+    monkeypatch.setattr(
+        upstream, "resolve_github_tarball_sha", lambda *_a, **_kw: "b" * 64
+    )
+    monkeypatch.setattr(
+        upstream, "release_notes_text", lambda *_a, **_kw: "### Fixed\n- bug A"
+    )
+
+    result = upstream.monitor_repo(load_manifest(manifest).repo("example-aio"))
+    body = upstream.upstream_body(
+        load_manifest(manifest).repo("example-aio"), result
+    )
+
+    assert "## Upstream release notes" in body  # nosec B101
+    assert "### Example 1.1.0" in body  # nosec B101
+    assert "bug A" in body  # nosec B101
+    assert "- Release notes: https://github.com/example/app/releases" in body  # nosec B101
+
+
+def test_upstream_body_falls_back_to_link_when_notes_fail(
+    tmp_path: Path, monkeypatch
+) -> None:
+    repo_path, manifest = _tarball_fixture(tmp_path)
+    manifest.write_text(manifest.read_text().replace(
+        "        stable_only: true\n",
+        "        stable_only: true\n        release_notes_url: https://github.com/example/app/releases\n",
+    ))
+    (repo_path / "Dockerfile").write_text(
+        "ARG UPSTREAM_VERSION=1.0.0\nARG UPSTREAM_TARBALL_SHA=" + "a" * 64 + "\n"
+    )
+
+    monkeypatch.setattr(
+        upstream, "latest_github_tag", lambda *_args, **_kwargs: "1.1.0"
+    )
+    monkeypatch.setattr(
+        upstream, "resolve_github_tarball_sha", lambda *_a, **_kw: "b" * 64
+    )
+    monkeypatch.setattr(upstream, "release_notes_text", lambda *_a, **_kw: "")
+
+    result = upstream.monitor_repo(load_manifest(manifest).repo("example-aio"))
+    body = upstream.upstream_body(
+        load_manifest(manifest).repo("example-aio"), result
+    )
+
+    assert "## Upstream release notes" not in body  # nosec B101
+    assert "- Release notes: https://github.com/example/app/releases" in body  # nosec B101
