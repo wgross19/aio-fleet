@@ -15,6 +15,8 @@ def test_github_policy_declares_superagent_for_all_fleet_repos() -> None:
         "aio-fleet",
         "awesome-unraid",
         "gbrain-aio",
+        "honcho-aio",
+        "fastcrw-aio",
     }
     assert set(repos) == expected_repos  # nosec B101
     for name in expected_repos:
