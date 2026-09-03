@@ -21,7 +21,11 @@ from aio_fleet.checks import check_run_payload, upsert_check_run
 from aio_fleet.github_writer import commit_paths_to_branch
 from aio_fleet.manifest import RepoConfig
 from aio_fleet.public_text import assert_public_text
-from aio_fleet.safety import assess_expected_update, render_safety_summary
+from aio_fleet.safety import (
+    assess_expected_update,
+    release_notes_text,
+    render_safety_summary,
+)
 
 SEMVER_RE = re.compile(
     r"^v?(?P<major>0|[1-9]\d*)\.(?P<minor>0|[1-9]\d*)\.(?P<patch>0|[1-9]\d*)"
@@ -1450,9 +1454,28 @@ def upstream_body(
         detail = f"{result.name}: {result.current_version} -> {result.latest_version}"
         if result.digest_update:
             detail += " plus image digest refresh"
+        if result.tarball_sha_update:
+            detail += " plus tarball sha256 refresh"
         lines.append(f"- {detail}")
         if result.release_notes_url:
             lines.append(f"- Release notes: {result.release_notes_url}")
+    notes_sections = []
+    for result in results:
+        notes = release_notes_text(result).strip()
+        if notes:
+            notes_sections.append(
+                f"### {result.name} {result.latest_version}\n\n{notes[:8000]}"
+            )
+    if notes_sections:
+        lines.extend(
+            [
+                "",
+                "## Upstream release notes",
+                "",
+                *notes_sections,
+                "",
+            ]
+        )
     lines.extend(
         [
             "- Source repo paths reviewed/generated:",
