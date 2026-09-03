@@ -75,3 +75,21 @@ repositories:
     required_check_app_ids:
       Superagent Security Scan: 3287076
       Contributor trust: 3287076
+  honcho-aio:
+    required_checks:
+      - aio-fleet / required
+      - Superagent Security Scan
+      - Contributor trust
+    required_check_app_id: 3565017
+    required_check_app_ids:
+      Superagent Security Scan: 3287076
+      Contributor trust: 3287076
+  fastcrw-aio:
+    required_checks:
+      - aio-fleet / required
+      - Superagent Security Scan
+      - Contributor trust
+    required_check_app_id: 3565017
+    required_check_app_ids:
+      Superagent Security Scan: 3287076
+      Contributor trust: 3287076
