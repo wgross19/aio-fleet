@@ -29,7 +29,7 @@ defaults:
     publish_policy: central-control
 repos:
   gbrain-aio:
-    path: ../gbrain-vanilla-aio
+    path: /workspace/projects/gbrain-aio-code-repo-support/app
     github_repo: wgross19/gbrain-aio
     public: true
     workflow_name: CI / GBrain AIO
