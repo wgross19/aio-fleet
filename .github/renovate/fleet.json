@@ -6,18 +6,11 @@
   "repositories": [
     "wgross19/aio-fleet",
     "wgross19/awesome-unraid",
-    "wgross19/dify-aio",
-    "wgross19/infisical-aio",
-    "wgross19/khoj-aio",
-    "wgross19/mem0-aio",
-    "wgross19/nanoclaw-aio",
-    "wgross19/penpot-aio",
-    "wgross19/signoz-aio",
-    "wgross19/simplelogin-aio",
-    "wgross19/sure-aio",
     "wgross19/unraid-aio-template"
   ],
-  "extends": ["config:recommended"],
+  "extends": [
+    "config:recommended"
+  ],
   "onboarding": false,
   "requireConfig": "optional",
   "branchPrefix": "renovate/fleet/",
@@ -29,7 +22,9 @@
   "dependencyDashboardAutoclose": true,
   "dependencyDashboardTitle": "Dependency Dashboard",
   "timezone": "America/Phoenix",
-  "schedule": ["* 2-6 * * 1"],
+  "schedule": [
+    "* 2-6 * * 1"
+  ],
   "updateNotScheduled": false,
   "minimumReleaseAge": "3 days",
   "prConcurrentLimit": 2,
@@ -53,28 +48,38 @@
   "packageRules": [
     {
       "description": "Group GitHub Actions updates so workflow pin churn stays reviewable.",
-      "matchManagers": ["github-actions"],
+      "matchManagers": [
+        "github-actions"
+      ],
       "groupName": "github actions",
       "semanticCommitType": "chore",
       "semanticCommitScope": "deps"
     },
     {
       "description": "Group Python test/control-plane dependencies by repo.",
-      "matchManagers": ["pep621", "pip_requirements", "pip_setup"],
+      "matchManagers": [
+        "pep621",
+        "pip_requirements",
+        "pip_setup"
+      ],
       "groupName": "python dependencies",
       "semanticCommitType": "chore",
       "semanticCommitScope": "deps"
     },
     {
       "description": "Group JavaScript dependencies where app repos carry package manifests.",
-      "matchManagers": ["npm"],
+      "matchManagers": [
+        "npm"
+      ],
       "groupName": "javascript dependencies",
       "semanticCommitType": "chore",
       "semanticCommitScope": "deps"
     },
     {
       "description": "Keep major upgrades separate and operator-approved.",
-      "matchUpdateTypes": ["major"],
+      "matchUpdateTypes": [
+        "major"
+      ],
       "dependencyDashboardApproval": true,
       "groupName": null
     }
