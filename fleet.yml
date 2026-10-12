@@ -30,6 +30,15 @@ defaults:
 repos:
   gbrain-aio:
     path: /workspace/projects/gbrain-aio-code-repo-support/app
+    # Smoke boot: dummy bootstrap env only; every value below is a fake.
+    smoke_test:
+      env:
+        GBRAIN_LAN_BIND: 192.168.99.10
+        GBRAIN_PUBLIC_URL: https://192.168.99.10:3132
+        POSTGRES_USER: gbrain
+        POSTGRES_DB: gbrain
+        POSTGRES_PASSWORD: s1mokegbrain0001
+        GBRAIN_ADMIN_BOOTSTRAP_TOKEN: smoketest_gbrain_token_000000000000001
     github_repo: wgross19/gbrain-aio
     public: true
     workflow_name: CI / GBrain AIO
@@ -85,6 +94,13 @@ repos:
         release_notes_url: https://github.com/caddyserver/caddy/releases
   honcho-aio:
     path: ../honcho-aio
+    # Smoke boot: dummy bootstrap env only; every value below is a fake.
+    smoke_test:
+      env:
+        POSTGRES_PASSWORD: s1mokehoncho0001
+        EMBEDDING_MODEL: local/embeddinggemma
+        CHAT_MODEL: local/honcho-smoke
+        LOCAL_BASE_URL: http://127.0.0.1:9999/v1
     github_repo: wgross19/honcho-aio
     public: true
     app_slug: honcho-aio
