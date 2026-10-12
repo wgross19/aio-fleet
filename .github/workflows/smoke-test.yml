@@ -3,7 +3,7 @@ name: Published Image Smoke Test
 #checkov:skip=CKV_GHA_7:workflow_dispatch has no privileged inputs; it only reruns the read-only smoke test
 on:
   schedule:
-    - cron: 47 8 * * 1
+    - cron: 47 3 * * *
   workflow_dispatch: {}
 
 permissions:
