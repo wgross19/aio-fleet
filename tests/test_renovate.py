@@ -8,13 +8,13 @@ import yaml
 from aio_fleet.manifest import load_manifest
 
 ROOT = Path(__file__).resolve().parents[1]
-FIXTURE = ROOT / "tests" / "fixtures" / "fleet.yml"
+MANIFEST = ROOT / "fleet.yml"
 CONFIG = ROOT / ".github" / "renovate" / "fleet.json"
 WORKFLOW = ROOT / ".github" / "workflows" / "renovate.yml"
 
 
 def test_renovate_config_targets_public_fleet_and_catalog_repos() -> None:
-    manifest = load_manifest(FIXTURE)
+    manifest = load_manifest(MANIFEST)
     config = json.loads(CONFIG.read_text())
 
     expected = {

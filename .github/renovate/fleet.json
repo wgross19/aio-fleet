@@ -6,7 +6,9 @@
   "repositories": [
     "wgross19/aio-fleet",
     "wgross19/awesome-unraid",
-    "wgross19/unraid-aio-template"
+    "wgross19/fastcrw-aio",
+    "wgross19/gbrain-aio",
+    "wgross19/honcho-aio"
   ],
   "extends": [
     "config:recommended"
