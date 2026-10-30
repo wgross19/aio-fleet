@@ -172,6 +172,9 @@ def test_alert_test_mode_uses_alert_webhook_secret_only() -> None:
     )
     assert alert_test["env"] == {  # nosec B101
         "AIO_FLEET_ALERT_WEBHOOK_URL": "${{ secrets.AIO_FLEET_ALERT_WEBHOOK_URL }}",
+        "AIO_FLEET_ALERT_WEBHOOK_HMAC_SECRET": (
+            "${{ secrets.AIO_FLEET_ALERT_WEBHOOK_HMAC_SECRET }}"
+        ),
         "DETAILS_URL": "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}",
     }
     assert (

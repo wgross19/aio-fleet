@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
+import time
 import urllib.parse
 import urllib.request
 from dataclasses import asdict, dataclass, field
@@ -376,8 +379,24 @@ def send_kuma_push(push_url: str, payload: AlertPayload) -> str:
     return "sent"
 
 
+def _webhook_v2_headers(body: bytes, webhook_secret: str) -> dict[str, str]:
+    """Generic HMAC V2: hex HMAC-SHA256 of '<timestamp>.<body>' plus a fresh timestamp.
+
+    Matches the Hermes webhook adapter scheme and its five-minute replay window.
+    """
+    timestamp = str(int(time.time()))
+    digest = hmac.new(
+        webhook_secret.encode(), timestamp.encode() + b"." + body, hashlib.sha256
+    ).hexdigest()
+    return {"X-Webhook-Timestamp": timestamp, "X-Webhook-Signature-V2": digest}
+
+
 def send_webhook(
-    webhook_url: str, payload: AlertPayload, *, webhook_format: str = "json"
+    webhook_url: str,
+    payload: AlertPayload,
+    *,
+    webhook_format: str = "json",
+    webhook_secret: str = "",
 ) -> None:
     if webhook_format == "text":
         body = _text_body(payload).encode()
@@ -388,10 +407,13 @@ def send_webhook(
     else:
         body = json.dumps(payload.as_dict(), sort_keys=True).encode()
         headers = {"Content-Type": "application/json"}
+    headers = {**headers, "User-Agent": HTTP_USER_AGENT}
+    if webhook_secret:
+        headers.update(_webhook_v2_headers(body, webhook_secret))
     request = urllib.request.Request(
         webhook_url,
         data=body,
-        headers={**headers, "User-Agent": HTTP_USER_AGENT},
+        headers=headers,
         method="POST",
     )
     with urllib.request.urlopen(request, timeout=20) as response:  # nosec B310
@@ -403,6 +425,7 @@ def emit_alert(
     *,
     kuma_url: str = "",
     webhook_url: str = "",
+    webhook_secret: str = "",
     webhook_format: str = "json",
     force_webhook: bool = False,
     dry_run: bool = False,
@@ -421,7 +444,12 @@ def emit_alert(
         if dry_run:
             deliveries["webhook"] = "would-send"
         else:
-            send_webhook(webhook_url, payload, webhook_format=webhook_format)
+            send_webhook(
+                webhook_url,
+                payload,
+                webhook_format=webhook_format,
+                webhook_secret=webhook_secret,
+            )
             deliveries["webhook"] = "sent"
     return deliveries
 
