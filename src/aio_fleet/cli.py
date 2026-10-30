@@ -89,6 +89,7 @@ from aio_fleet.fleetbot import render_command_response
 from aio_fleet.github_cli import github_cli_env
 from aio_fleet.github_policy import load_policy, validate_github_policy
 from aio_fleet.hooks import install_local_hooks, run_local_trunk_overlay
+from aio_fleet.floors import dependency_floor_violations
 from aio_fleet.manifest import FleetManifest, ManifestError, RepoConfig, load_manifest
 from aio_fleet.poll import poll_targets, resolve_changed_files
 from aio_fleet.public_text import assert_public_text, redact_public_text
@@ -1065,6 +1066,20 @@ def cmd_validate_repo(args: argparse.Namespace) -> int:
         return 1
     print(f"{repo.name} fleet policy checks passed")
     return 0
+
+
+def cmd_floor_check(args: argparse.Namespace) -> int:
+    manifest = load_manifest(Path(args.manifest))
+    repo = _repo_for_identifier(manifest, args.repo)
+    repo_path = Path(args.repo_path or str(repo.path))
+    violations = dependency_floor_violations(repo, repo_path)
+    print(
+        json.dumps(
+            {"repo": repo.name, "ok": not violations, "violations": violations},
+            sort_keys=True,
+        )
+    )
+    return 1 if violations else 0
 
 
 def cmd_validate_template_common(args: argparse.Namespace) -> int:
@@ -5950,6 +5965,11 @@ def build_parser() -> argparse.ArgumentParser:
     repo.add_argument("--repo", required=True)
     repo.add_argument("--repo-path", default=".")
     repo.set_defaults(func=cmd_validate_repo)
+
+    floor_check = sub.add_parser("floor-check")
+    floor_check.add_argument("--repo", required=True)
+    floor_check.add_argument("--repo-path", default="")
+    floor_check.set_defaults(func=cmd_floor_check)
 
     catalog = sub.add_parser("validate-catalog")
     catalog.add_argument("--catalog-path", required=True)

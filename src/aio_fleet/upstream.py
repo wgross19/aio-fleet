@@ -1311,6 +1311,157 @@ def result_dict(result: UpstreamMonitorResult) -> dict[str, object]:
     return data
 
 
+def _floor_blocker(record: dict[str, Any], *, reason: str) -> dict[str, str]:
+    return {
+        "component": str(record.get("component", "")),
+        "floor": str(record.get("spec", "")),
+        "pinned": str(record.get("pinned", "")),
+        "reason": reason,
+        "hint": str(record.get("hint", "")),
+    }
+
+
+def _floor_candidate(
+    config: dict[str, Any], spec: Any, candidates_resolver: Any = None
+) -> GitHubReleaseCandidate | None:
+    """Newest stable release of the component that satisfies `spec`, else None."""
+    from aio_fleet.floors import FloorSpec, satisfies_numbers, version_numbers
+
+    if not isinstance(spec, FloorSpec):
+        return None
+    if candidates_resolver is not None:
+        candidates = candidates_resolver(config)
+    else:
+        candidates, _skipped = github_release_candidates_result(
+            str(config.get("repo", "") or ""),
+            stable_only=bool(config.get("stable_only", True)),
+            prerelease_channel=str(config.get("prerelease_channel", "") or ""),
+            strip_prefix=str(config.get("version_strip_prefix", "") or ""),
+        )
+    for candidate in candidates:
+        numbers = version_numbers(candidate.version)
+        if numbers is not None and satisfies_numbers(numbers, spec):
+            return candidate
+    return None
+
+
+def _floor_digest(config: dict[str, Any], version: str) -> str:
+    return registry_digest_for_version(
+        str(config.get("image", "") or ""),
+        version,
+        registry=str(config.get("digest_source", "") or ""),
+        prefix=str(config.get("digest_tag_prefix", "") or ""),
+    )
+
+
+def apply_dependency_floors(
+    repo: RepoConfig,
+    results: list[UpstreamMonitorResult],
+    *,
+    dry_run: bool = False,
+    fetch_json: Any = None,
+    candidates_resolver: Any = None,
+    digest_resolver: Any = None,
+) -> dict[str, Any]:
+    """Raise dependent pins whose provider floor their current pin violates.
+
+    The provider ref and pending pins come from the bump in progress: a
+    ``pr``-strategy result's latest_commit/latest_version overrides the
+    Dockerfile value. Every violation is resolved against the component's own
+    release candidates (newest stable satisfying the floor) and both the
+    version and digest args are rewritten on its Dockerfile. In ``dry_run`` no
+    file is touched and records carry ``action: would-bump``.
+
+    Returns a state dict: ``records`` (all classifications), ``bumps`` (applied
+    or would-be pin raises), ``unresolvable`` (violations no candidate plus
+    digest could satisfy), and ``changed_dockerfiles_rel`` (paths to commit
+    with the PR).
+    """
+    from aio_fleet.floors import (
+        dependency_floor_records,
+        parse_floor,
+        version_numbers,
+    )
+
+    pr_changed = {
+        result.component: result
+        for result in results
+        if result.updates_available and result.strategy == "pr" and not result.blocked
+    }
+    provider_refs = {
+        component: (result.latest_commit or result.latest_version)
+        for component, result in pr_changed.items()
+    }
+    pinned_versions = {
+        component: result.latest_version for component, result in pr_changed.items()
+    }
+    records = dependency_floor_records(
+        repo,
+        repo.path,
+        fetch_json=fetch_json,
+        provider_refs=provider_refs,
+        pinned_versions=pinned_versions,
+    )
+    by_component = {
+        str(config.get("component")): config for config in monitor_configs(repo)
+    }
+    bumps: list[dict[str, Any]] = []
+    unresolvable: list[dict[str, str]] = []
+    changed_rel: list[str] = []
+    for record in records:
+        if record["status"] != "violation":
+            continue
+        config = by_component[record["component"]]
+        spec = parse_floor(record["spec"])
+        candidate = _floor_candidate(config, spec, candidates_resolver)
+        if candidate is None:
+            unresolvable.append(_floor_blocker(record, reason="no-release-satisfies-floor"))
+            continue
+        dockerfile = repo.path / str(config.get("dockerfile", "Dockerfile"))
+        version_key = str(config.get("version_key", "") or "").strip()
+        digest_key = str(config.get("digest_key", "") or "").strip()
+        try:
+            digest = (
+                (
+                    digest_resolver(config, candidate.version)
+                    if digest_resolver
+                    else _floor_digest(config, candidate.version)
+                )
+                if digest_key
+                else ""
+            )
+        except (RegistryDigestNotFoundError, ValueError) as error:
+            unresolvable.append(_floor_blocker(record, reason=str(error)))
+            continue
+        record.update(
+            {
+                "action": "would-bump" if dry_run else "bumped",
+                "new_version": candidate.version,
+                "dockerfile_rel": str(dockerfile.relative_to(repo.path)),
+            }
+        )
+        bumps.append(record)
+        if dry_run:
+            continue
+        try:
+            if digest_key:
+                write_arg(dockerfile, digest_key, digest)
+            write_arg(dockerfile, version_key, candidate.version)
+        except ValueError as error:
+            # A failed write leaves the record unapplied; the central check will
+            # still catch the underlying floor violation.
+            bumps.pop()
+            unresolvable.append(_floor_blocker(record, reason=str(error)))
+            continue
+        changed_rel.append(record["dockerfile_rel"])
+    return {
+        "records": records,
+        "bumps": bumps,
+        "unresolvable": unresolvable,
+        "changed_dockerfiles_rel": changed_rel,
+    }
+
+
 def create_or_update_upstream_pr(
     repo: RepoConfig,
     results: list[UpstreamMonitorResult],
@@ -1339,11 +1490,33 @@ def create_or_update_upstream_pr(
         if blocked:
             action["blockers"] = [result_dict(result) for result in blocked]
         return action
+    floor_state = apply_dependency_floors(repo, results, dry_run=dry_run)
+    if floor_state["unresolvable"] and not dry_run:
+        return {
+            "repo": repo.name,
+            "action": "skipped",
+            "reason": "blocked-dependency-floor",
+            "blockers": [
+                {
+                    "component": blocker["component"],
+                    "floor": blocker["floor"],
+                    "pinned": blocker["pinned"],
+                    "reason": blocker["reason"],
+                    "hint": blocker["hint"],
+                }
+                for blocker in floor_state["unresolvable"]
+            ],
+        }
     branch = upstream_branch(repo, changed)
     title = upstream_title(repo, changed)
     configured_paths = repo.list_value("upstream_commit_paths")
     commit_paths = sorted(_upstream_commit_paths(repo, changed, configured_paths))
-    body = upstream_body(repo, changed, changed_paths=commit_paths)
+    for rel in floor_state["changed_dockerfiles_rel"]:
+        if rel not in commit_paths:
+            commit_paths.append(rel)
+    body = upstream_body(
+        repo, changed, changed_paths=commit_paths, floor_bumps=floor_state["bumps"]
+    )
     if dry_run:
         payload: dict[str, object] = {
             "repo": repo.name,
@@ -1351,6 +1524,7 @@ def create_or_update_upstream_pr(
             "branch": branch,
             "title": title,
             "paths": commit_paths,
+            "floor_bumps": floor_state["bumps"],
         }
         if post_check:
             payload["check_payload"] = check_run_payload(
@@ -1432,6 +1606,7 @@ def upstream_body(
     results: list[UpstreamMonitorResult],
     *,
     changed_paths: list[str] | None = None,
+    floor_bumps: list[dict[str, Any]] | None = None,
 ) -> str:
     changed_paths = sorted(
         changed_paths
@@ -1459,6 +1634,12 @@ def upstream_body(
         lines.append(f"- {detail}")
         if result.release_notes_url:
             lines.append(f"- Release notes: {result.release_notes_url}")
+    for bump in floor_bumps or []:
+        lines.append(
+            f"- Dependency floor: `{bump['component']}` raised to `{bump['new_version']}` "
+            f"to satisfy `{bump['floor_field']}` `{bump['spec']}` declared by "
+            f"`{bump['provider']}` at {str(bump.get('provider_ref', ''))[:12]}."
+        )
     notes_sections = []
     for result in results:
         notes = release_notes_text(result).strip()
