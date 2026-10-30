@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
+import time
 import urllib.parse
 import urllib.request
 
@@ -74,6 +77,79 @@ def test_webhook_sends_failure_with_dedupe_key(monkeypatch) -> None:
     assert body["dedupe_key"] == "registry-audit:fleet"  # nosec B101
     assert body["status"] == "failure"  # nosec B101
     assert seen[0].headers["User-agent"] == "aio-fleet-alerts/1.0"  # nosec B101
+
+
+def test_webhook_signs_body_with_v2_scheme(monkeypatch) -> None:
+    seen: list[urllib.request.Request] = []
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return b"OK"
+
+    def fake_urlopen(request: urllib.request.Request, timeout: int):
+        seen.append(request)
+        return Response()
+
+    monkeypatch.setattr(alerts.urllib.request, "urlopen", fake_urlopen)
+    payload = alerts.alert_payload(
+        event="poll-check",
+        status="failure",
+        summary="aio-fleet required check failed",
+        dedupe_key="poll-check:gbrain-aio:pr:86",
+    )
+
+    secret = "test-hook-secret"
+    alerts.emit_alert(
+        payload,
+        webhook_url="https://hooks.example/fleet",
+        webhook_secret=secret,
+    )
+
+    request = seen[0]
+    body = request.data.decode()  # type: ignore[union-attr]
+    timestamp = request.headers["X-webhook-timestamp"]  # nosec B101
+    signature = request.headers["X-webhook-signature-v2"]  # nosec B101
+    expected = hmac.new(
+        secret.encode(), timestamp.encode() + b"." + body.encode(), hashlib.sha256
+    ).hexdigest()
+    assert signature == expected  # nosec B101
+    assert abs(int(time.time()) - int(timestamp)) < 300  # nosec B101
+
+
+def test_webhook_without_secret_omits_signature_headers(monkeypatch) -> None:
+    seen: list[urllib.request.Request] = []
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return b"OK"
+
+    def fake_urlopen(request: urllib.request.Request, timeout: int):
+        seen.append(request)
+        return Response()
+
+    monkeypatch.setattr(alerts.urllib.request, "urlopen", fake_urlopen)
+    payload = alerts.alert_payload(
+        event="poll-check",
+        status="failure",
+        summary="aio-fleet required check failed",
+    )
+
+    alerts.emit_alert(payload, webhook_url="https://hooks.example/fleet")
+
+    assert "X-webhook-signature-v2" not in seen[0].headers  # nosec B101
+    assert "X-webhook-timestamp" not in seen[0].headers  # nosec B101
 
 
 def test_discord_webhook_uses_discord_payload(monkeypatch) -> None:

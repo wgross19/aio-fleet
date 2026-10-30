@@ -1302,6 +1302,8 @@ def cmd_alert_send(args: argparse.Namespace) -> int:
         kuma_url=args.kuma_url or os.environ.get("AIO_FLEET_KUMA_PUSH_URL", ""),
         webhook_url=args.webhook_url
         or os.environ.get("AIO_FLEET_ALERT_WEBHOOK_URL", ""),
+        webhook_secret=getattr(args, "webhook_secret", "")
+        or os.environ.get("AIO_FLEET_ALERT_WEBHOOK_HMAC_SECRET", ""),
         webhook_format=args.webhook_format,
         force_webhook=args.force_webhook,
         dry_run=args.dry_run,
@@ -1318,6 +1320,7 @@ def cmd_alert_send(args: argparse.Namespace) -> int:
 def cmd_alert_doctor(args: argparse.Namespace) -> int:
     kuma_url = args.kuma_url or os.environ.get("AIO_FLEET_KUMA_PUSH_URL", "")
     webhook_url = args.webhook_url or os.environ.get("AIO_FLEET_ALERT_WEBHOOK_URL", "")
+    webhook_hmac = os.environ.get("AIO_FLEET_ALERT_WEBHOOK_HMAC_SECRET", "")
     findings: list[str] = []
     warnings: list[str] = []
     if not webhook_url:
@@ -1328,6 +1331,7 @@ def cmd_alert_doctor(args: argparse.Namespace) -> int:
     report = {
         "kuma": "configured" if kuma_url else "disabled",
         "webhook": "configured" if webhook_url else "missing",
+        "webhook_hmac": "configured" if webhook_hmac else "missing",
         "warnings": warnings,
         "findings": findings,
         "ok": not findings,
@@ -1335,7 +1339,7 @@ def cmd_alert_doctor(args: argparse.Namespace) -> int:
     if args.format == "json":
         print(json.dumps(report, indent=2, sort_keys=True))
     else:
-        print(f"alert kuma={report['kuma']} webhook={report['webhook']}")
+        print(f"alert kuma={report['kuma']} webhook={report['webhook']} hmac={report['webhook_hmac']}")
         for warning in warnings:
             print(f"- warning: {warning}")
         for finding in findings:
@@ -1359,6 +1363,8 @@ def cmd_alert_test(args: argparse.Namespace) -> int:
         kuma_url=args.kuma_url or os.environ.get("AIO_FLEET_KUMA_PUSH_URL", ""),
         webhook_url=args.webhook_url
         or os.environ.get("AIO_FLEET_ALERT_WEBHOOK_URL", ""),
+        webhook_secret=getattr(args, "webhook_secret", "")
+        or os.environ.get("AIO_FLEET_ALERT_WEBHOOK_HMAC_SECRET", ""),
         webhook_format=args.webhook_format,
         force_webhook=True,
         dry_run=args.dry_run,
@@ -6039,6 +6045,7 @@ def build_parser() -> argparse.ArgumentParser:
     alert_send.add_argument("--report-json")
     alert_send.add_argument("--kuma-url")
     alert_send.add_argument("--webhook-url")
+    alert_send.add_argument("--webhook-secret")
     alert_send.add_argument(
         "--webhook-format", choices=["json", "text"], default="json"
     )
@@ -6066,6 +6073,7 @@ def build_parser() -> argparse.ArgumentParser:
     alert_test.add_argument("--details-url")
     alert_test.add_argument("--kuma-url")
     alert_test.add_argument("--webhook-url")
+    alert_test.add_argument("--webhook-secret")
     alert_test.add_argument(
         "--webhook-format", choices=["json", "text"], default="json"
     )
