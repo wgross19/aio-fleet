@@ -83,6 +83,10 @@ repos:
         stable_only: true
         strategy: notify
         release_notes_url: https://github.com/oven-sh/bun/releases
+        floor:
+          from_component: gbrain
+          file: package.json
+          field: engines.bun
       - component: caddy
         name: Caddy
         source: github-tags

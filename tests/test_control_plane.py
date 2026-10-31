@@ -32,14 +32,17 @@ def test_central_check_steps_for_pr_include_policy_and_integration(
     assert names == [
         "validate-repo",
         "verify-caller",
+        "dependency-preflight",
         "install-test-deps",
         "integration-tests",
     ]  # nosec B101
     assert steps[0].cwd == ROOT  # nosec B101
     assert steps[1].cwd == ROOT  # nosec B101
-    assert steps[2].cwd == tmp_path  # nosec B101
-    assert str(ROOT) in steps[2].command[-1]  # nosec B101
-    assert steps[2].command[-1].endswith("[app-tests]")  # nosec B101
+    assert steps[2].name == "dependency-preflight"  # nosec B101
+    assert steps[2].cwd == ROOT  # nosec B101
+    assert steps[3].cwd == tmp_path  # nosec B101
+    assert str(ROOT) in steps[3].command[-1]  # nosec B101
+    assert steps[3].command[-1].endswith("[app-tests]")  # nosec B101
 
 
 def test_central_check_steps_keep_pr_integration_when_submodule_checkout_is_missing(

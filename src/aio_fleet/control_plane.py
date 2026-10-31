@@ -118,6 +118,22 @@ def central_check_steps(
                     trusted_cwd,
                     inherit_secrets=False,
                 ),
+                Step(
+                    "dependency-preflight",
+                    [
+                        sys.executable,
+                        "-m",
+                        "aio_fleet.cli",
+                        *manifest_args,
+                        "floor-check",
+                        "--repo",
+                        repo.name,
+                        "--repo-path",
+                        str(repo.path),
+                    ],
+                    trusted_cwd,
+                    inherit_secrets=False,
+                ),
             ]
         )
     install = _install_test_dependencies_step(repo.path)
