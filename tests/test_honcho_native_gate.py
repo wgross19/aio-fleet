@@ -39,6 +39,7 @@ ACTUAL_AMD64_RUN = Path(__file__).parent / "fixtures" / "honcho-native-amd64"
 # Real run tokens are 12 lowercase hex (verified on the actual AMD64 receipts).
 TOKEN_A = "aabb00cc11dd"
 TOKEN_B = "1122ee33ff44"
+SUITE_SHA = "ab" * 20
 
 
 def _contents(scenario: str, token: str) -> dict:
@@ -67,6 +68,7 @@ def _receipt(
     )
     return {
         "scenario": scenario,
+        "suite_git_head": SUITE_SHA,
         "classification": (
             "harness-sanity-same-digest"
             if scenario == "same_digest_smoke"
@@ -131,6 +133,7 @@ def _amd64_call(tmp_path: Path, **overrides):
     )
     return validate_receipts(
         load_receipts(receipts_dir),
+        expected_suite_sha=SUITE_SHA,
         expected_mode="dind-tls",
         expected_arch="amd64",
         expected_previous_image=AMD64_PREVIOUS,
@@ -148,6 +151,7 @@ def _arm64_call(tmp_path: Path, **overrides):
     )
     return validate_receipts(
         load_receipts(receipts_dir),
+        expected_suite_sha=SUITE_SHA,
         expected_mode="host-default",
         expected_arch="arm64",
         expected_previous_image=ARM64_PREVIOUS,
@@ -180,6 +184,7 @@ def test_arm_mismatch_rejected_on_actual_amd64_evidence(tmp_path: Path) -> None:
     with pytest.raises(HonchoGateError, match="mode/arch mismatch|expected mode"):
         validate_receipts(
             load_receipts(receipts_dir),
+            expected_suite_sha=SUITE_SHA,
             expected_mode="host-default",
             expected_arch="arm64",
             expected_previous_image=ARM64_PREVIOUS,
@@ -199,6 +204,7 @@ def test_baseline_must_be_the_reviewed_repository(tmp_path: Path) -> None:
                 tmp_path, mode="host-default", arch="arm64",
                 candidate_ref=ARM64_CANDIDATE, candidate_id=ARM64_CANDIDATE_ID,
             )),
+            expected_suite_sha=SUITE_SHA,
             expected_mode="host-default", expected_arch="arm64",
             expected_previous_image="evil/honcho-aio@sha256:" + "0" * 64,
             expected_previous_id="sha256:" + "0" * 64,
@@ -214,6 +220,7 @@ def test_candidate_must_be_loopback_staged(tmp_path: Path) -> None:
                 tmp_path, mode="host-default", arch="arm64",
                 candidate_ref=ARM64_CANDIDATE, candidate_id=ARM64_CANDIDATE_ID,
             )),
+            expected_suite_sha=SUITE_SHA,
             expected_mode="host-default", expected_arch="arm64",
             expected_previous_image=ARM64_PREVIOUS,
             expected_previous_id=AMD64_PREVIOUS_ID,
@@ -240,6 +247,7 @@ def test_same_image_control_bound_to_baseline(tmp_path: Path) -> None:
     with pytest.raises(HonchoGateError, match="same-image control"):
         validate_receipts(
             receipts,
+            expected_suite_sha=SUITE_SHA,
             expected_mode="host-default", expected_arch="arm64",
             expected_previous_image=ARM64_PREVIOUS,
             expected_previous_id=AMD64_PREVIOUS_ID,
@@ -258,6 +266,7 @@ def test_upgrade_arm_distinct_ids_required(tmp_path: Path) -> None:
     with pytest.raises(HonchoGateError, match="collapsed to one image id"):
         validate_receipts(
             receipts,
+            expected_suite_sha=SUITE_SHA,
             expected_mode="host-default", expected_arch="arm64",
             expected_previous_image=ARM64_PREVIOUS,
             expected_previous_id=AMD64_PREVIOUS_ID,
@@ -276,6 +285,7 @@ def test_upgrade_arm_staged_identity_mismatch_rejected(tmp_path: Path) -> None:
     with pytest.raises(HonchoGateError, match="candidate id .* is not the staged"):
         validate_receipts(
             receipts,
+            expected_suite_sha=SUITE_SHA,
             expected_mode="host-default", expected_arch="arm64",
             expected_previous_image=ARM64_PREVIOUS,
             expected_previous_id=AMD64_PREVIOUS_ID,
@@ -298,6 +308,7 @@ def test_count_chain_regression_rejected(tmp_path: Path) -> None:
     with pytest.raises(HonchoGateError, match="chain broke at disk_after_replace"):
         validate_receipts(
             receipts,
+            expected_suite_sha=SUITE_SHA,
             expected_mode="host-default", expected_arch="arm64",
             expected_previous_image=ARM64_PREVIOUS,
             expected_previous_id=AMD64_PREVIOUS_ID,
@@ -317,6 +328,7 @@ def test_reused_message_ids_rejected(tmp_path: Path) -> None:
     with pytest.raises(HonchoGateError, match="three distinct ids"):
         validate_receipts(
             receipts,
+            expected_suite_sha=SUITE_SHA,
             expected_mode="host-default", expected_arch="arm64",
             expected_previous_image=ARM64_PREVIOUS,
             expected_previous_id=AMD64_PREVIOUS_ID,
@@ -336,6 +348,7 @@ def test_fixed_workspace_name_rejected(tmp_path: Path) -> None:
     with pytest.raises(HonchoGateError, match="disposable honcho-rq- prefix"):
         validate_receipts(
             receipts,
+            expected_suite_sha=SUITE_SHA,
             expected_mode="host-default", expected_arch="arm64",
             expected_previous_image=ARM64_PREVIOUS,
             expected_previous_id=AMD64_PREVIOUS_ID,
@@ -354,6 +367,7 @@ def test_scenario_set_must_be_exactly_two(tmp_path: Path) -> None:
     with pytest.raises(HonchoGateError, match="unknown scenario"):
         validate_receipts(
             receipts,
+            expected_suite_sha=SUITE_SHA,
             expected_mode="host-default", expected_arch="arm64",
             expected_previous_image=ARM64_PREVIOUS,
             expected_previous_id=AMD64_PREVIOUS_ID,
@@ -376,6 +390,7 @@ def test_run_tokens_unique_across_scenarios(tmp_path: Path) -> None:
     with pytest.raises(HonchoGateError, match="run tokens are reused"):
         validate_receipts(
             receipts,
+            expected_suite_sha=SUITE_SHA,
             expected_mode="host-default", expected_arch="arm64",
             expected_previous_image=ARM64_PREVIOUS,
             expected_previous_id=AMD64_PREVIOUS_ID,
@@ -395,7 +410,49 @@ def test_contents_must_embed_the_run_token(tmp_path: Path) -> None:
     with pytest.raises(HonchoGateError, match="after_replace-forged|three-stage"):
         validate_receipts(
             receipts,
+            expected_suite_sha=SUITE_SHA,
             expected_mode="host-default", expected_arch="arm64",
+            expected_previous_image=ARM64_PREVIOUS,
+            expected_previous_id=AMD64_PREVIOUS_ID,
+            expected_candidate_image=ARM64_CANDIDATE,
+            expected_candidate_id=ARM64_CANDIDATE_ID,
+        )
+
+
+
+def test_suite_ref_missing_from_receipt_rejected(tmp_path: Path) -> None:
+    receipts_dir = _write_pair(
+        tmp_path, mode="host-default", arch="arm64",
+        candidate_ref=ARM64_CANDIDATE, candidate_id=ARM64_CANDIDATE_ID,
+    )
+    receipts = load_receipts(receipts_dir)
+    for receipt in receipts:
+        receipt.pop("suite_git_head")
+    with pytest.raises(HonchoGateError, match="suite_git_head"):
+        validate_receipts(
+            receipts,
+            expected_mode="host-default", expected_arch="arm64",
+            expected_suite_sha=SUITE_SHA,
+            expected_previous_image=ARM64_PREVIOUS,
+            expected_previous_id=AMD64_PREVIOUS_ID,
+            expected_candidate_image=ARM64_CANDIDATE,
+            expected_candidate_id=ARM64_CANDIDATE_ID,
+        )
+
+
+def test_swapped_suite_ref_rejected(tmp_path: Path) -> None:
+    receipts_dir = _write_pair(
+        tmp_path, mode="host-default", arch="arm64",
+        candidate_ref=ARM64_CANDIDATE, candidate_id=ARM64_CANDIDATE_ID,
+    )
+    receipts = load_receipts(receipts_dir)
+    for receipt in receipts:
+        receipt["suite_git_head"] = "0" * 40  # an unreviewed suite
+    with pytest.raises(HonchoGateError, match="reviewed suite ref"):
+        validate_receipts(
+            receipts,
+            expected_mode="host-default", expected_arch="arm64",
+            expected_suite_sha=SUITE_SHA,
             expected_previous_image=ARM64_PREVIOUS,
             expected_previous_id=AMD64_PREVIOUS_ID,
             expected_candidate_image=ARM64_CANDIDATE,
@@ -477,11 +534,12 @@ def test_junit_rejects_failures_rc_and_empty_reports(tmp_path: Path) -> None:
 class TestActualAMD64Run:
     def test_receipts_validate_on_their_own_terms(self) -> None:
         actual_refs = json.loads(
-            (ACTUAL_AMD64_RUN / "receipts" / "honcho-aio-two_version_upgrade-cdad19dfd1bc.json")
+            (ACTUAL_AMD64_RUN / "receipts" / "honcho-aio-two_version_upgrade-fb986edd7c21.json")
             .read_text(encoding="utf-8")
         )
         result = validate_receipts(
             load_receipts(ACTUAL_AMD64_RUN / "receipts"),
+            expected_suite_sha=actual_refs["suite_git_head"],
             expected_mode=actual_refs["docker_endpoint_mode"],
             expected_arch="amd64",
             expected_previous_image=actual_refs["previous_ref"],
@@ -491,16 +549,17 @@ class TestActualAMD64Run:
         )
         assert result["same_image_control"] == "bound"
         assert result["final_disk_messages"] == 3
-        assert result["run_tokens"] == ["f2f5864f46d5", "cdad19dfd1bc"]
+        assert result["run_tokens"] == ["6a2596aaf0f7", "fb986edd7c21"]
 
     def test_arm_hosted_presentation_of_the_amd64_run_is_rejected(self) -> None:
         actual_refs = json.loads(
-            (ACTUAL_AMD64_RUN / "receipts" / "honcho-aio-two_version_upgrade-cdad19dfd1bc.json")
+            (ACTUAL_AMD64_RUN / "receipts" / "honcho-aio-two_version_upgrade-fb986edd7c21.json")
             .read_text(encoding="utf-8")
         )
         with pytest.raises(HonchoGateError, match="mode/arch mismatch|expected mode"):
             validate_receipts(
                 load_receipts(ACTUAL_AMD64_RUN / "receipts"),
+                expected_suite_sha=actual_refs["suite_git_head"],
                 expected_mode="host-default",
                 expected_arch="arm64",
                 expected_previous_image=actual_refs["previous_ref"],

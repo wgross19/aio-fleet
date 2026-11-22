@@ -11,7 +11,9 @@ name: Honcho ARM64 Release Qualification (test only)
 #     runner, kept alive until the receipts gate has read it.
 #   * The candidate is BUILT ONCE from the trusted exact app-main commit the
 #     dispatch pins (app_main_sha); the suite runs from a SEPARATELY reviewed
-#     exact ref (app_test_ref) carrying the tests/release suite. No
+#     exact ref (app_test_ref) carrying the tests/release suite, and every
+#     receipt must bind suite_git_head to that same ref — an unreviewed or
+#     swapped suite cannot pass its own evidence off as reviewed. No
 #     user-supplied image refs exist: the previous image is pinned by digest
 #     below to the known baseline, and the candidate is always the freshly
 #     built, locally staged one, tested by its loopback digest.
@@ -253,6 +255,7 @@ jobs:
           AIO_CANDIDATE_IMAGE: ${{ steps.stage.outputs.candidate }}
           AIO_RELEASE_ARCH: arm64
           AIO_RELEASE_NATIVE_DOCKER: "1"
+          AIO_SUITE_GIT_HEAD: ${{ inputs.app_test_ref }}
           AIO_RELEASE_RECEIPTS_DIR: ${{ runner.temp }}/aio-release-receipts
         run: |
           set +e
@@ -282,6 +285,7 @@ jobs:
           RECEIPTS_DIR: ${{ runner.temp }}/aio-release-receipts
           EXPECTED_MODE: host-default
           EXPECTED_ARCH: arm64
+          EXPECTED_SUITE_SHA: ${{ inputs.app_test_ref }}
           EXPECTED_PREVIOUS: ${{ env.HONCHO_PREVIOUS_IMAGE }}
           EXPECTED_PREVIOUS_ID: ${{ steps.previous.outputs.previous_id }}
           EXPECTED_CANDIDATE: ${{ steps.stage.outputs.candidate }}
@@ -291,6 +295,7 @@ jobs:
           python -I -m aio_fleet.honcho_native_check receipts "${RECEIPTS_DIR}" \
             --expected-mode "${EXPECTED_MODE}" \
             --expected-arch "${EXPECTED_ARCH}" \
+            --expected-suite-sha "${EXPECTED_SUITE_SHA}" \
             --expected-previous "${EXPECTED_PREVIOUS}" \
             --expected-previous-id "${EXPECTED_PREVIOUS_ID}" \
             --expected-candidate "${EXPECTED_CANDIDATE}" \
@@ -314,4 +319,5 @@ jobs:
           docker image rm -f honcho-aio:arm64-qualification >/dev/null 2>&1 || true
           docker ps -aq --filter 'name=^honcho-rq-' | xargs -r docker rm -fv >/dev/null 2>&1 || true
           docker volume ls -q --filter 'name=^honcho-rq-' | xargs -r docker volume rm >/dev/null 2>&1 || true
-          echo "runner-local resources removed; nothing left the runner"
+          docker network ls -q --filter 'name=^honcho-rq-' | xargs -r docker network rm >/dev/null 2>&1 || true
+          echo "runner-local containers, volumes and honcho-rq networks removed"

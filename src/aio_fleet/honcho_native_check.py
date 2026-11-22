@@ -40,6 +40,7 @@ PREVIOUS_REPOSITORY = "dub19/honcho-aio"
 PINNED_REF = re.compile(r"^[^\s@]+@sha256:[0-9a-f]{64}$")
 SHA256_ID = re.compile(r"^sha256:[0-9a-f]{64}$")
 RUN_TOKEN = re.compile(r"^[0-9a-f]{6,16}$")
+GIT_SHA = re.compile(r"^[0-9a-f]{40}$")
 
 # The named cases that actually drive Docker. The wrapper/negative cases run
 # in the same suite; these three prove the engine gate and both choreographies.
@@ -207,6 +208,7 @@ def validate_receipts(
     *,
     expected_mode: str,
     expected_arch: str,
+    expected_suite_sha: str,
     expected_previous_image: str,
     expected_previous_id: str,
     expected_candidate_image: str,
@@ -220,7 +222,16 @@ def validate_receipts(
     verified local DinD path (``dind-tls``/``amd64``) as well as the hosted
     ARM64 path — an AMD64-local receipt presented as ARM64 hosted evidence is
     rejected, and vice versa.
+
+    ``expected_suite_sha`` is the manager-reviewed test ref the workflow
+    dispatched; every receipt must prove the suite that produced it ran from
+    exactly that commit (``suite_git_head``), so an unreviewed or silently
+    swapped suite cannot pass its own evidence off as reviewed.
     """
+    if GIT_SHA.fullmatch(expected_suite_sha) is None:
+        raise HonchoGateError(
+            f"expected suite sha is not a 40-hex commit: {expected_suite_sha!r}"
+        )
     _require_pinned(expected_previous_image, "expected previous")
     _require(
         expected_previous_image.startswith(PREVIOUS_REPOSITORY + "@"),
@@ -280,6 +291,11 @@ def validate_receipts(
             "(mode/arch mismatch — local evidence cannot pass as hosted ARM64)",
         )
         _require(
+            receipt.get("suite_git_head") == expected_suite_sha,
+            f"{label}: suite_git_head {receipt.get('suite_git_head')!r} is not "
+            f"the reviewed suite ref {expected_suite_sha!r}",
+        )
+        _require(
             receipt.get("previous_ref") == expected_previous_image,
             f"{label}: receipts tested previous "
             f"{receipt.get('previous_ref')!r}, not the pinned baseline",
@@ -335,6 +351,7 @@ def validate_receipts(
         "scenarios": sorted(by_scenario),
         "mode": expected_mode,
         "arch": expected_arch,
+        "suite_ref": expected_suite_sha,
         "previous_image": expected_previous_image,
         "previous_id": expected_previous_id,
         "candidate_image": expected_candidate_image,
@@ -383,6 +400,7 @@ def summary_markdown(summary: Mapping) -> str:
         "| --- | --- |",
         f"| Arch | `{summary['arch']}` |",
         f"| Endpoint mode | `{summary['mode']}` |",
+        f"| Suite ref | `{summary['suite_ref']}` |",
         f"| Previous | `{summary['previous_image']}` (`{summary['previous_id']}`) |",
         f"| Candidate | `{summary['candidate_image']}` (`{summary['candidate_id']}`) |",
         f"| Same-image control | `{summary['same_image_control']}` |",
@@ -408,6 +426,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     receipts.add_argument("directory", type=Path)
     receipts.add_argument("--expected-mode", required=True)
     receipts.add_argument("--expected-arch", required=True)
+    receipts.add_argument("--expected-suite-sha", required=True)
     receipts.add_argument("--expected-previous", required=True)
     receipts.add_argument("--expected-previous-id", required=True)
     receipts.add_argument("--expected-candidate", required=True)
@@ -423,6 +442,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 load_receipts(args.directory),
                 expected_mode=args.expected_mode,
                 expected_arch=args.expected_arch,
+                expected_suite_sha=args.expected_suite_sha,
                 expected_previous_image=args.expected_previous,
                 expected_previous_id=args.expected_previous_id,
                 expected_candidate_image=args.expected_candidate,
