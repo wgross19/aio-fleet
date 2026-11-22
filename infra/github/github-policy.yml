@@ -3,7 +3,7 @@ default_branch: main
 # Required check producer IDs captured from live check runs:
 # - GitHub Actions: 15368
 # - CodeQL: 57789
-# - wgross19 AIO Fleet: 3565017
+# - aio-fleet: 4643060 (verified on merged app PR heads)
 # - Superagent Security: 3287076
 defaults:
   repository:
@@ -71,7 +71,7 @@ repositories:
       - aio-fleet / required
       - Superagent Security Scan
       - Contributor trust
-    required_check_app_id: 3565017
+    required_check_app_id: 4643060
     required_check_app_ids:
       Superagent Security Scan: 3287076
       Contributor trust: 3287076
@@ -80,7 +80,7 @@ repositories:
       - aio-fleet / required
       - Superagent Security Scan
       - Contributor trust
-    required_check_app_id: 3565017
+    required_check_app_id: 4643060
     required_check_app_ids:
       Superagent Security Scan: 3287076
       Contributor trust: 3287076
@@ -89,7 +89,7 @@ repositories:
       - aio-fleet / required
       - Superagent Security Scan
       - Contributor trust
-    required_check_app_id: 3565017
+    required_check_app_id: 4643060
     required_check_app_ids:
       Superagent Security Scan: 3287076
       Contributor trust: 3287076
