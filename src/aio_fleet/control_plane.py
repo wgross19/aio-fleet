@@ -151,12 +151,18 @@ def central_check_steps(
                 inherit_secrets=False,
             )
         )
+    # Load the fleet's runner, not a module of the same name in the app checkout.
+    strict = [
+        sys.executable,
+        "-I",
+        str(Path(__file__).resolve().with_name("strict_pytest.py")),
+    ]
     unit_args = str(repo.get("unit_pytest_args", "") or "").strip()
     if include_app_checks and unit_args:
         steps.append(
             Step(
                 "unit-tests",
-                [_repo_python(repo.path), "-m", "pytest", *shlex.split(unit_args)],
+                [*strict, *shlex.split(unit_args)],
                 repo.path,
                 inherit_secrets=False,
             )
@@ -182,9 +188,8 @@ def central_check_steps(
             Step(
                 "integration-tests",
                 [
-                    _repo_python(repo.path),
-                    "-m",
-                    "pytest",
+                    *strict,
+                    "--aio-strict-require-docker",
                     *shlex.split(integration_args),
                 ],
                 repo.path,
