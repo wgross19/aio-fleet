@@ -1,0 +1,317 @@
+name: Honcho ARM64 Release Qualification (test only)
+
+#checkov:skip=CKV_GHA_7:workflow_dispatch is the intentional manual entry point; both refs are validated before checkout
+
+# Manual, read-only proof that the honcho-aio release suite passes on a native
+# arm64 GitHub-hosted runner — the verified GBrain runner-local model:
+#
+#   * NO registry login, NO tokens beyond the runner's ephemeral identity, NO
+#     packages scope, NO public upload/artifact, NO external writes. The only
+#     push is to a disposable 127.0.0.1 loopback registry on the ephemeral
+#     runner, kept alive until the receipts gate has read it.
+#   * The candidate is BUILT ONCE from the trusted exact app-main commit the
+#     dispatch pins (app_main_sha); the suite runs from a SEPARATELY reviewed
+#     exact ref (app_test_ref) carrying the tests/release suite. No
+#     user-supplied image refs exist: the previous image is pinned by digest
+#     below to the known baseline, and the candidate is always the freshly
+#     built, locally staged one, tested by its loopback digest.
+#   * The suite self-enforces digest-pinned inputs, ARM64-only hosted opt-in,
+#     no DOCKER_CONTEXT redirects, no published ports, own-only disposable
+#     honcho-rq-* resources, and real API identity chains.
+#
+# PREREQUISITES — deliberately inert until ALL are true:
+#   1. tests/release exists on the exact commit passed as app_test_ref. It is
+#      currently NOT on main (unmerged lane); a manager pins its SHA. main is
+#      never modified and the test ref is never merged merely to run it.
+#   2. The pinned baseline digest below (dub19/honcho-aio v3.3.0-aio.2) must
+#      stay the supported upgrade baseline; revisit the constant when it moves.
+# The local AMD64 run was DinD-only evidence and does NOT qualify this hosted
+# path; no claim is made that this workflow has run.
+
+on:
+  workflow_dispatch:
+    inputs:
+      app_main_sha:
+        description: Trusted wgross19/honcho-aio main commit to build from (40 lowercase hex)
+        required: true
+        type: string
+      app_test_ref:
+        description: Manager-reviewed commit carrying tests/release (40 hex; may be unmerged)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: honcho-arm64-release-qualification
+  cancel-in-progress: false
+
+jobs:
+  qualify:
+    name: native-arm64 tests/release
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 90
+    env:
+      PYTHONUNBUFFERED: "1"
+      HONCHO_PREVIOUS_IMAGE: dub19/honcho-aio@sha256:7a532cdc01e2d34cb52589fb64e3c784f8d8c979d027e81e4f1528c48a64511b
+      REGISTRY_IMAGE: registry@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373
+    steps:
+      - name: Enforce trusted ref for manual runs
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        env:
+          EXPECTED_REF: refs/heads/${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REF}" != "${EXPECTED_REF}" ]]; then
+            echo "Manual qualification runs are restricted to ${EXPECTED_REF}; got ${GITHUB_REF}." >&2
+            exit 1
+          fi
+
+      - name: Validate dispatched app refs
+        env:
+          APP_MAIN_SHA: ${{ inputs.app_main_sha }}
+          APP_TEST_REF: ${{ inputs.app_test_ref }}
+        run: |
+          set -euo pipefail
+          for ref in "${APP_MAIN_SHA}" "${APP_TEST_REF}"; do
+            if [[ ! "${ref}" =~ ^[0-9a-f]{40}$ ]]; then
+              echo "app_main_sha and app_test_ref must be 40-char lowercase commit SHAs; got '${ref}'" >&2
+              exit 1
+            fi
+          done
+
+      - name: Checkout trusted fleet (this workflow and its gate only)
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Checkout trusted app main (provenance and build source)
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: wgross19/honcho-aio
+          ref: ${{ inputs.app_main_sha }}
+          path: app-main
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Pin app main exactly and prove it is merged to main
+        working-directory: app-main
+        env:
+          APP_MAIN_SHA: ${{ inputs.app_main_sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${APP_MAIN_SHA}"
+          git fetch --no-tags --quiet origin main
+          git merge-base --is-ancestor HEAD FETCH_HEAD
+          echo "trusted main sha verified and merged: ${APP_MAIN_SHA}"
+
+      - name: Checkout separately reviewed test ref carrying tests/release
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: wgross19/honcho-aio
+          ref: ${{ inputs.app_test_ref }}
+          path: app-tests
+          persist-credentials: false
+
+      - name: Fail closed without the reviewed suite and record the test SHA
+        working-directory: app-tests
+        env:
+          APP_TEST_REF: ${{ inputs.app_test_ref }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${APP_TEST_REF}"
+          test -f tests/release/conftest.py
+          test -f tests/release/test_upgrade.py
+          git rev-parse HEAD > "${RUNNER_TEMP}/app_test_ref.txt"
+          echo "test-ref suite present at ${APP_TEST_REF} (NOT required to be merged)"
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.13"
+
+      - name: Install the suite runtime and the tested fleet gate
+        run: |
+          set -euo pipefail
+          python -m pip install --quiet pytest defusedxml
+          python -m pip install --quiet -e '.[dev]'
+
+      - name: Prove native arm64 hosted runner and daemon
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = aarch64
+          test "${GITHUB_ACTIONS}" = "true"
+          test "${RUNNER_ENVIRONMENT}" = "github-hosted"
+          test -z "${DOCKER_CONTEXT:-}"
+          test "$(docker version --format '{{.Server.Arch}}')" = arm64
+          docker info --format 'native arch={{.Architecture}} os={{.OperatingSystem}}'
+
+      - name: Pull the pinned baseline for arm64
+        id: previous
+        env:
+          PREVIOUS_IMAGE: ${{ env.HONCHO_PREVIOUS_IMAGE }}
+        run: |
+          set -euo pipefail
+          docker pull --quiet --platform linux/arm64 "${PREVIOUS_IMAGE}"
+          test "$(docker image inspect --format '{{.Architecture}}' "${PREVIOUS_IMAGE}")" = arm64
+          echo "previous_id=$(docker image inspect --format '{{.Id}}' "${PREVIOUS_IMAGE}")" >> "${GITHUB_OUTPUT}"
+
+      - name: Build the candidate once from trusted main
+        id: candidate
+        env:
+          PREVIOUS_IMAGE: ${{ env.HONCHO_PREVIOUS_IMAGE }}
+        run: |
+          set -euo pipefail
+          docker build --platform linux/arm64 \
+            --tag honcho-aio:arm64-qualification app-main
+          test "$(docker image inspect --format '{{.Architecture}}' honcho-aio:arm64-qualification)" = arm64
+          local_id="$(docker image inspect --format '{{.Id}}' honcho-aio:arm64-qualification)"
+          previous_id="$(docker image inspect --format '{{.Id}}' "${PREVIOUS_IMAGE}")"
+          if [[ "${local_id}" == "${previous_id}" ]]; then
+            echo "candidate and pinned baseline resolve to one image id" >&2
+            exit 1
+          fi
+          echo "local_id=${local_id}" >> "${GITHUB_OUTPUT}"
+
+      - name: Bind the candidate to the trusted main build provenance
+        working-directory: app-main
+        env:
+          CANDIDATE_ID: ${{ steps.candidate.outputs.local_id }}
+        run: |
+          set -euo pipefail
+          pinned_sha="$(sed -n 's/^ARG HONCHO_GIT_SHA=\([0-9a-f]\{40\}\)$/\1/p' Dockerfile | head -n1)"
+          if [[ ! "${pinned_sha}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "no HONCHO_GIT_SHA pin found in the trusted main Dockerfile" >&2
+            exit 1
+          fi
+          pinned_version="$(sed -n 's/^ARG HONCHO_VERSION=\([^ ]*\)$/\1/p' Dockerfile | head -n1)"
+          label_revision="$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' honcho-aio:arm64-qualification)"
+          test "${label_revision}" = "${pinned_sha}" \
+            || { echo "candidate revision label ${label_revision} != main pin ${pinned_sha}" >&2; exit 1; }
+          echo "candidate bound to trusted main: version=${pinned_version:-unlabeled} upstream=${pinned_sha} image_id=${CANDIDATE_ID}"
+
+      - name: Stage the candidate on a disposable loopback registry (kept alive)
+        id: stage
+        env:
+          LOCAL_ID: ${{ steps.candidate.outputs.local_id }}
+        run: |
+          set -euo pipefail
+          container=honcho-arm64-qualification-registry
+          test -z "$(docker ps -aq -f "name=^${container}$")"
+          docker pull --quiet --platform linux/arm64 "${REGISTRY_IMAGE}"
+          docker run -d --name "${container}" -p 127.0.0.1::5000 "${REGISTRY_IMAGE}" >/dev/null
+          for _ in $(seq 1 60); do
+            if docker exec "${container}" wget -qO- http://127.0.0.1:5000/v2/ >/dev/null 2>&1; then
+              break
+            fi
+            sleep 1
+          done
+          docker exec "${container}" wget -qO- http://127.0.0.1:5000/v2/ >/dev/null
+          address="$(docker port "${container}" 5000/tcp)"
+          if [[ ! "${address}" =~ ^127\.0\.0\.1:[0-9]+$ ]]; then
+            echo "unexpected loopback registry address: ${address}" >&2
+            exit 1
+          fi
+          repo="${address}/honcho-arm64-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          docker tag honcho-aio:arm64-qualification "${repo}:test"
+          docker push --quiet "${repo}:test"
+          candidate="$(docker image inspect \
+            --format '{{range .RepoDigests}}{{println .}}{{end}}' "${repo}:test" \
+            | grep -m1 -F "${repo}@sha256:" || true)"
+          if [[ ! "${candidate}" =~ ^127\.0\.0\.1:[0-9]+/honcho-arm64-[0-9]+-[0-9]+@sha256:[0-9a-f]{64}$ ]]; then
+            echo "loopback did not return an immutable candidate digest: ${candidate}" >&2
+            exit 1
+          fi
+          test "$(docker image inspect --format '{{.Id}}' "${candidate}")" = "${LOCAL_ID}"
+          # The registry, tag and staged digest stay alive through the suite
+          # and both evidence gates; cleanup happens in the final step only.
+          echo "candidate=${candidate}" >> "${GITHUB_OUTPUT}"
+          echo "repo_tag=${repo}:test" >> "${GITHUB_OUTPUT}"
+          echo "registry_container=${container}" >> "${GITHUB_OUTPUT}"
+
+      - name: Verify staged inputs resolve immediately before the suite
+        env:
+          PREVIOUS_IMAGE: ${{ env.HONCHO_PREVIOUS_IMAGE }}
+          PREVIOUS_ID: ${{ steps.previous.outputs.previous_id }}
+          CANDIDATE_IMAGE: ${{ steps.stage.outputs.candidate }}
+          CANDIDATE_ID: ${{ steps.candidate.outputs.local_id }}
+          REGISTRY_CONTAINER: ${{ steps.stage.outputs.registry_container }}
+        run: |
+          set -euo pipefail
+          test "$(docker inspect --format '{{.State.Running}}' "${REGISTRY_CONTAINER}")" = true
+          test "$(docker image inspect --format '{{.Id}}' "${PREVIOUS_IMAGE}")" = "${PREVIOUS_ID}"
+          test "$(docker image inspect --format '{{.Id}}' "${CANDIDATE_IMAGE}")" = "${CANDIDATE_ID}"
+          test "$(docker image inspect --format '{{.Architecture}}' "${CANDIDATE_IMAGE}")" = arm64
+          echo "resolved previous=${PREVIOUS_IMAGE} (${PREVIOUS_ID})"
+          echo "resolved candidate=${CANDIDATE_IMAGE} (${CANDIDATE_ID})"
+
+      - name: Run the reviewed release suite on native arm64
+        working-directory: app-tests
+        env:
+          AIO_PREVIOUS_IMAGE: ${{ env.HONCHO_PREVIOUS_IMAGE }}
+          AIO_CANDIDATE_IMAGE: ${{ steps.stage.outputs.candidate }}
+          AIO_RELEASE_ARCH: arm64
+          AIO_RELEASE_NATIVE_DOCKER: "1"
+          AIO_RELEASE_RECEIPTS_DIR: ${{ runner.temp }}/aio-release-receipts
+        run: |
+          set +e
+          python -m pytest -q tests/release --junitxml "${RUNNER_TEMP}/release-junit.xml"
+          rc=$?
+          set -e
+          echo "PYTEST_RC=${rc}" >> "${GITHUB_ENV}"
+          exit "${rc}"
+
+      - name: Gate the JUnit report with the central strict parser
+        if: ${{ always() }}
+        env:
+          JUNIT: ${{ runner.temp }}/release-junit.xml
+          PYTEST_RC: ${{ env.PYTEST_RC }}
+        run: |
+          set -euo pipefail
+          if [[ ! -f "${JUNIT}" ]]; then
+            echo "no JUnit report; the run failed before any test executed" >&2
+            exit 1
+          fi
+          python -I -m aio_fleet.honcho_native_check junit "${JUNIT}" \
+            --pytest-rc "${PYTEST_RC:-1}"
+
+      - name: Gate both scenario receipts against the exact inputs
+        if: ${{ always() }}
+        env:
+          RECEIPTS_DIR: ${{ runner.temp }}/aio-release-receipts
+          EXPECTED_MODE: host-default
+          EXPECTED_ARCH: arm64
+          EXPECTED_PREVIOUS: ${{ env.HONCHO_PREVIOUS_IMAGE }}
+          EXPECTED_PREVIOUS_ID: ${{ steps.previous.outputs.previous_id }}
+          EXPECTED_CANDIDATE: ${{ steps.stage.outputs.candidate }}
+          EXPECTED_CANDIDATE_ID: ${{ steps.candidate.outputs.local_id }}
+        run: |
+          set -euo pipefail
+          python -I -m aio_fleet.honcho_native_check receipts "${RECEIPTS_DIR}" \
+            --expected-mode "${EXPECTED_MODE}" \
+            --expected-arch "${EXPECTED_ARCH}" \
+            --expected-previous "${EXPECTED_PREVIOUS}" \
+            --expected-previous-id "${EXPECTED_PREVIOUS_ID}" \
+            --expected-candidate "${EXPECTED_CANDIDATE}" \
+            --expected-candidate-id "${EXPECTED_CANDIDATE_ID}" \
+            --summary "${GITHUB_STEP_SUMMARY}"
+
+      - name: Remove the loopback registry and run-scoped resources
+        if: ${{ always() }}
+        env:
+          REPO_TAG: ${{ steps.stage.outputs.repo_tag }}
+          REGISTRY_CONTAINER: ${{ steps.stage.outputs.registry_container }}
+        run: |
+          set -euo pipefail
+          if [[ -n "${REGISTRY_CONTAINER}" ]]; then
+            docker rm -fv "${REGISTRY_CONTAINER}" >/dev/null 2>&1 || true
+          fi
+          if [[ -n "${REPO_TAG}" ]]; then
+            docker image rm -f "${REPO_TAG}" >/dev/null 2>&1 || true
+          fi
+          docker rm -fv honcho-arm64-qualification-registry >/dev/null 2>&1 || true
+          docker image rm -f honcho-aio:arm64-qualification >/dev/null 2>&1 || true
+          docker ps -aq --filter 'name=^honcho-rq-' | xargs -r docker rm -fv >/dev/null 2>&1 || true
+          docker volume ls -q --filter 'name=^honcho-rq-' | xargs -r docker volume rm >/dev/null 2>&1 || true
+          echo "runner-local resources removed; nothing left the runner"

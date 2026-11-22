@@ -1,0 +1,29 @@
+{
+  "arch": "linux/amd64/linux/amd64",
+  "candidate_container_image_id": "sha256:7a532cdc01e2d34cb52589fb64e3c784f8d8c979d027e81e4f1528c48a64511b",
+  "candidate_image_id": "sha256:7a532cdc01e2d34cb52589fb64e3c784f8d8c979d027e81e4f1528c48a64511b",
+  "candidate_ref": "dub19/honcho-aio@sha256:7a532cdc01e2d34cb52589fb64e3c784f8d8c979d027e81e4f1528c48a64511b",
+  "classification": "harness-sanity-same-digest",
+  "contents": {
+    "after_replace": "release-quality-same_digest_smoke-replace-f2f5864f46d5",
+    "after_restart": "release-quality-same_digest_smoke-restart-f2f5864f46d5",
+    "seed": "release-quality-same_digest_smoke-seed-f2f5864f46d5"
+  },
+  "disk_message_counts": {
+    "disk_after_post_restart_write": 3,
+    "disk_after_replace": 1,
+    "disk_after_restart": 2,
+    "disk_after_seed": 1,
+    "disk_after_write_on_candidate": 2,
+    "disk_before_seed": 0
+  },
+  "docker_endpoint_mode": "dind-tls",
+  "message_id": "PoRh-IgAWJML7V4tGb4By",
+  "previous_image_id": "sha256:7a532cdc01e2d34cb52589fb64e3c784f8d8c979d027e81e4f1528c48a64511b",
+  "previous_ref": "dub19/honcho-aio@sha256:7a532cdc01e2d34cb52589fb64e3c784f8d8c979d027e81e4f1528c48a64511b",
+  "run_token": "f2f5864f46d5",
+  "scenario": "same_digest_smoke",
+  "workspace": "honcho-rq-same-digest-smoke-f7f6032a96-ws",
+  "write_after_replace_id": "cQAA9ofSl-ocZ1bx4HZfk",
+  "write_after_restart_id": "TzolKeRV0ehJpUkEOIet4"
+}

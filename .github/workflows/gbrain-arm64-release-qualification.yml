@@ -1,0 +1,245 @@
+name: GBrain ARM64 Release Qualification (test only)
+
+#checkov:skip=CKV_GHA_7:workflow_dispatch is the intentional manual entry point; app_sha is validated before checkout
+
+# Manual, read-only proof that the merged gbrain-aio release suite passes on a
+# NATIVE arm64 hosted runner. Publishing is disabled by construction: read-only
+# token, no registry login, no public push/tag, no artifact upload. The only
+# push is to an ephemeral registry bound to 127.0.0.1 on the ephemeral runner.
+# The suite's containers use --network none; disposable aio-rel-* volumes only.
+on:
+  workflow_dispatch:
+    inputs:
+      app_sha:
+        description: Merged wgross19/gbrain-aio commit (40 lowercase hex, on main)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gbrain-arm64-release-qualification
+  cancel-in-progress: false
+
+jobs:
+  qualify:
+    name: native-arm64 tests/release
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 90
+    env:
+      PYTHONUNBUFFERED: "1"
+    steps:
+      - name: Enforce trusted ref for manual runs
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        env:
+          EXPECTED_REF: refs/heads/${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REF}" != "${EXPECTED_REF}" ]]; then
+            echo "Manual qualification runs are restricted to ${EXPECTED_REF}; got ${GITHUB_REF}." >&2
+            exit 1
+          fi
+
+      - name: Validate dispatched app SHA
+        env:
+          APP_SHA: ${{ inputs.app_sha }}
+        run: |
+          set -euo pipefail
+          if [[ ! "${APP_SHA}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "app_sha must be a 40-character lowercase commit SHA; got '${APP_SHA}'" >&2
+            exit 1
+          fi
+
+      - name: Checkout trusted fleet
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Checkout app tests and build context
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: wgross19/gbrain-aio
+          ref: ${{ inputs.app_sha }}
+          path: app-repo
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Require a merged app commit
+        working-directory: app-repo
+        env:
+          APP_SHA: ${{ inputs.app_sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${APP_SHA}"
+          git fetch --no-tags --quiet origin main
+          git merge-base --is-ancestor HEAD FETCH_HEAD
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.13"
+
+      - name: Install tested fleet tooling only
+        run: |
+          set -euo pipefail
+          python -m pip install --quiet -e '.[dev]'
+
+      - name: Prove native arm64 runner and daemon
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = aarch64
+          test "${GITHUB_ACTIONS}" = "true"
+          test "${RUNNER_ENVIRONMENT}" = "github-hosted"
+          test "$(docker version --format '{{.Server.Arch}}')" = arm64
+          docker info --format 'native arch={{.Architecture}} os={{.OperatingSystem}}'
+
+      - name: Resolve reviewed digest pins
+        id: refs
+        run: |
+          set -euo pipefail
+          python -I -m aio_fleet.native_release refs app-repo \
+            --github-output "${GITHUB_OUTPUT}"
+
+      - name: Pull pinned previous image for arm64
+        id: previous
+        env:
+          PREVIOUS_IMAGE: ${{ steps.refs.outputs.previous }}
+        run: |
+          set -euo pipefail
+          docker pull --quiet --platform linux/arm64 "${PREVIOUS_IMAGE}"
+          test "$(docker image inspect --format '{{.Architecture}}' "${PREVIOUS_IMAGE}")" = arm64
+          echo "previous_id=$(docker image inspect --format '{{.Id}}' "${PREVIOUS_IMAGE}")" \
+            >> "${GITHUB_OUTPUT}"
+
+      - name: Build the candidate natively
+        id: candidate
+        env:
+          PREVIOUS_IMAGE: ${{ steps.refs.outputs.previous }}
+        run: |
+          set -euo pipefail
+          docker build --platform linux/arm64 \
+            --tag gbrain-aio:arm64-qualification app-repo
+          local_id="$(docker image inspect --format '{{.Id}}' gbrain-aio:arm64-qualification)"
+          test "$(docker image inspect --format '{{.Architecture}}' gbrain-aio:arm64-qualification)" = arm64
+          previous_id="$(docker image inspect --format '{{.Id}}' "${PREVIOUS_IMAGE}")"
+          if [[ "${local_id}" == "${previous_id}" ]]; then
+            echo "candidate and previous resolve to one image id" >&2
+            exit 1
+          fi
+          echo "local_id=${local_id}" >> "${GITHUB_OUTPUT}"
+
+      - name: Stage candidate in an ephemeral loopback registry
+        id: stage
+        env:
+          REGISTRY_IMAGE: ${{ steps.refs.outputs.registry }}
+          LOCAL_ID: ${{ steps.candidate.outputs.local_id }}
+        run: |
+          set -euo pipefail
+          container=aio-arm64-qualification-registry
+          test -z "$(docker ps -aq -f "name=^${container}$")"
+          docker pull --quiet --platform linux/arm64 "${REGISTRY_IMAGE}"
+          docker run -d --name "${container}" -p 127.0.0.1::5000 "${REGISTRY_IMAGE}" >/dev/null
+          for _ in $(seq 1 60); do
+            if docker exec "${container}" wget -qO- http://127.0.0.1:5000/v2/ >/dev/null 2>&1; then
+              break
+            fi
+            sleep 1
+          done
+          docker exec "${container}" wget -qO- http://127.0.0.1:5000/v2/ >/dev/null
+          address="$(docker port "${container}" 5000/tcp)"
+          if [[ ! "${address}" =~ ^127\.0\.0\.1:[0-9]+$ ]]; then
+            echo "unexpected loopback registry address: ${address}" >&2
+            exit 1
+          fi
+          repo="127.0.0.1:${address##*:}/gbrain-arm64-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          docker tag gbrain-aio:arm64-qualification "${repo}:test"
+          docker push --quiet "${repo}:test"
+          candidate="$(docker image inspect \
+            --format '{{range .RepoDigests}}{{println .}}{{end}}' "${repo}:test" \
+            | grep -m1 -F "${repo}@sha256:" || true)"
+          if [[ ! "${candidate}" =~ ^127\.0\.0\.1:[0-9]+/gbrain-arm64-[0-9]+-[0-9]+@sha256:[0-9a-f]{64}$ ]]; then
+            echo "loopback did not return an immutable candidate digest: ${candidate}" >&2
+            exit 1
+          fi
+          test "$(docker image inspect --format '{{.Id}}' "${candidate}")" = "${LOCAL_ID}"
+          # Keep the registry, tag and digest alive until the evidence steps
+          # finish; the suite and the receipt gate resolve this exact digest.
+          echo "candidate=${candidate}" >> "${GITHUB_OUTPUT}"
+          echo "repo_tag=${repo}:test" >> "${GITHUB_OUTPUT}"
+          echo "registry_container=${container}" >> "${GITHUB_OUTPUT}"
+
+      - name: Verify staged inputs resolve immediately before the suite
+        env:
+          PREVIOUS_IMAGE: ${{ steps.refs.outputs.previous }}
+          PREVIOUS_ID: ${{ steps.previous.outputs.previous_id }}
+          CANDIDATE_IMAGE: ${{ steps.stage.outputs.candidate }}
+          CANDIDATE_ID: ${{ steps.candidate.outputs.local_id }}
+          REGISTRY_CONTAINER: ${{ steps.stage.outputs.registry_container }}
+        run: |
+          set -euo pipefail
+          test "$(docker inspect --format '{{.State.Running}}' "${REGISTRY_CONTAINER}")" = true
+          test "$(docker image inspect --format '{{.Id}}' "${PREVIOUS_IMAGE}")" = "${PREVIOUS_ID}"
+          test "$(docker image inspect --format '{{.Id}}' "${CANDIDATE_IMAGE}")" = "${CANDIDATE_ID}"
+          test "$(docker image inspect --format '{{.Architecture}}' "${CANDIDATE_IMAGE}")" = arm64
+          echo "resolved previous=${PREVIOUS_IMAGE} (${PREVIOUS_ID})"
+          echo "resolved candidate=${CANDIDATE_IMAGE} (${CANDIDATE_ID})"
+
+      - name: Run the exact merged release suite on native arm64
+        working-directory: app-repo
+        env:
+          AIO_PREVIOUS_IMAGE: ${{ steps.refs.outputs.previous }}
+          AIO_CANDIDATE_IMAGE: ${{ steps.stage.outputs.candidate }}
+          AIO_RELEASE_ARCH: arm64
+          AIO_RELEASE_RECEIPTS_DIR: ${{ runner.temp }}/aio-release-receipts
+        run: |
+          set +e
+          python -m pytest -q tests/release --junitxml "${RUNNER_TEMP}/release-junit.xml"
+          rc=$?
+          set -e
+          echo "PYTEST_RC=${rc}" >> "${GITHUB_ENV}"
+          exit "${rc}"
+
+      - name: Require named cases and zero skips
+        if: ${{ always() }}
+        run: |
+          set -euo pipefail
+          python -I -m aio_fleet.native_release junit \
+            "${RUNNER_TEMP}/release-junit.xml" --pytest-rc "${PYTEST_RC:-1}"
+
+      - name: Validate both ownership receipts and write summary
+        if: ${{ always() }}
+        env:
+          EXPECTED_SHA: ${{ inputs.app_sha }}
+          EXPECTED_PREVIOUS_IMAGE: ${{ steps.refs.outputs.previous }}
+          EXPECTED_PREVIOUS_ID: ${{ steps.previous.outputs.previous_id }}
+          EXPECTED_CANDIDATE_IMAGE: ${{ steps.stage.outputs.candidate }}
+          EXPECTED_CANDIDATE_ID: ${{ steps.candidate.outputs.local_id }}
+          RECEIPTS_DIR: ${{ runner.temp }}/aio-release-receipts
+        run: |
+          set -euo pipefail
+          python -I -m aio_fleet.native_release receipts "${RECEIPTS_DIR}" \
+            --expected-sha "${EXPECTED_SHA}" \
+            --expected-previous "${EXPECTED_PREVIOUS_IMAGE}" \
+            --expected-previous-id "${EXPECTED_PREVIOUS_ID}" \
+            --expected-candidate "${EXPECTED_CANDIDATE_IMAGE}" \
+            --expected-candidate-id "${EXPECTED_CANDIDATE_ID}" \
+            --summary "${GITHUB_STEP_SUMMARY}"
+
+      - name: Remove loopback and run-scoped resources
+        if: ${{ always() }}
+        env:
+          REPO_TAG: ${{ steps.stage.outputs.repo_tag }}
+          REGISTRY_CONTAINER: ${{ steps.stage.outputs.registry_container }}
+        run: |
+          set -euo pipefail
+          if [[ -n "${REGISTRY_CONTAINER}" ]]; then
+            docker rm -fv "${REGISTRY_CONTAINER}" >/dev/null 2>&1 || true
+          fi
+          if [[ -n "${REPO_TAG}" ]]; then
+            docker image rm -f "${REPO_TAG}" >/dev/null 2>&1 || true
+          fi
+          docker rm -fv aio-arm64-qualification-registry >/dev/null 2>&1 || true
+          docker image rm -f gbrain-aio:arm64-qualification >/dev/null 2>&1 || true
+          docker ps -aq --filter 'name=^aio-rel-' | xargs -r docker rm -fv >/dev/null 2>&1 || true
+          docker volume ls -q --filter 'name=^aio-rel-' | xargs -r docker volume rm >/dev/null 2>&1 || true
