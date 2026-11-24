@@ -86,7 +86,8 @@ def _branch_protection_failures(
     if not expected:
         return []
     branch = str(policy.get("branch", policy.get("default_branch", "main")))
-    data = _gh_json(["api", f"repos/{owner}/{repo_name}/branches/{branch}/protection"])
+    data, source = _load_branch_controls(owner, repo_name, branch)
+    label = "branch protection" if source == "classic" else "branch rules"
 
     expected_checks = list(policy.get("required_checks", []))
     actual_checks = data.get("required_status_checks", {}).get("contexts", [])
@@ -110,7 +111,9 @@ def _branch_protection_failures(
         if context in expected_checks
     }
     per_check_app_ids = policy.get("required_check_app_ids")
-    enforce_check_app_coverage = expected_check_app_id is not None or bool(per_check_app_ids)
+    enforce_check_app_coverage = expected_check_app_id is not None or bool(
+        per_check_app_ids
+    )
     if enforce_check_app_coverage:
         missing_expected_check_app_ids = sorted(
             set(expected_checks) - set(known_expected_check_app_ids)
@@ -152,9 +155,123 @@ def _branch_protection_failures(
     for key, actual in checks.items():
         if key in expected and actual != expected[key]:
             failures.append(
-                f"{repo_name}: branch protection {key} expected {expected[key]!r}, got {actual!r}"
+                f"{repo_name}: {label} {key} expected {expected[key]!r}, got {actual!r}"
             )
     return failures
+
+
+def _load_branch_controls(
+    owner: str, repo_name: str, branch: str
+) -> tuple[dict[str, Any], str]:
+    """Read classic protection, or the effective branch rules when it is absent.
+
+    These app repos no longer use the branch protection API. That call returns
+    404, so a report based only on it cannot see the rulesets that actually
+    gate main.
+    """
+    try:
+        classic = _gh_json(
+            ["api", f"repos/{owner}/{repo_name}/branches/{branch}/protection"]
+        )
+    except RuntimeError as exc:
+        message = str(exc)
+        if "Branch not protected" not in message and "404" not in message:
+            raise
+        classic = None
+    if classic:
+        return classic, "classic"
+    rules = (
+        _gh_json(["api", f"repos/{owner}/{repo_name}/rules/branches/{branch}"]) or []
+    )
+    return _protection_from_effective_rules(owner, repo_name, rules), "rules"
+
+
+def _protection_from_effective_rules(
+    owner: str, repo_name: str, rules: Any
+) -> dict[str, Any]:
+    contexts: list[str] = []
+    checks: list[dict[str, Any]] = []
+    strict = None
+    review_count = None
+    thread_resolution = None
+    signatures = False
+    ruleset_ids: list[int] = []
+    if not isinstance(rules, list):
+        rules = []
+    for rule in rules:
+        if not isinstance(rule, dict):
+            continue
+        ruleset_id = rule.get("ruleset_id")
+        if isinstance(ruleset_id, int):
+            ruleset_ids.append(ruleset_id)
+        kind = rule.get("type")
+        params = rule.get("parameters") or {}
+        if not isinstance(params, dict):
+            params = {}
+        if kind == "required_status_checks":
+            for item in params.get("required_status_checks") or []:
+                if not isinstance(item, dict):
+                    continue
+                context = str(item.get("context", ""))
+                contexts.append(context)
+                checks.append(
+                    {
+                        "context": context,
+                        "app_id": item.get("integration_id", item.get("app_id")),
+                    }
+                )
+            strict = params.get("strict_required_status_checks_policy")
+        elif kind == "pull_request":
+            review_count = params.get("required_approving_review_count")
+            thread_resolution = bool(params.get("required_review_thread_resolution"))
+        elif kind == "required_signatures":
+            signatures = True
+    return {
+        "required_status_checks": {
+            "contexts": contexts,
+            "checks": checks,
+            "strict": strict,
+        },
+        "enforce_admins": {
+            "enabled": (
+                _rules_enforce_admins(owner, repo_name, ruleset_ids) if rules else False
+            )
+        },
+        "required_conversation_resolution": {
+            "enabled": False if thread_resolution is None else thread_resolution
+        },
+        "required_signatures": {"enabled": signatures},
+        "required_pull_request_reviews": {
+            "required_approving_review_count": (
+                0 if review_count is None else review_count
+            )
+        },
+    }
+
+
+def _rules_enforce_admins(owner: str, repo_name: str, ruleset_ids: list[int]) -> bool:
+    """Rulesets apply to admins unless an admin actor can always bypass them."""
+    admin_bypass = False
+    for ruleset_id in sorted(set(ruleset_ids)):
+        try:
+            ruleset = _gh_json(
+                ["api", f"repos/{owner}/{repo_name}/rulesets/{ruleset_id}"]
+            )
+        except RuntimeError:
+            return True
+        for actor in (ruleset or {}).get("bypass_actors") or []:
+            if not isinstance(actor, dict):
+                continue
+            if actor.get("bypass_mode") != "always":
+                continue
+            if actor.get("actor_type") == "OrganizationAdmin":
+                admin_bypass = True
+            if (
+                actor.get("actor_type") == "RepositoryRole"
+                and actor.get("actor_id") == 5
+            ):
+                admin_bypass = True
+    return not admin_bypass
 
 
 def _required_check_app_failures(
