@@ -547,3 +547,74 @@ def test_infra_uses_rulesets_for_app_bound_required_checks() -> None:
     assert "integration_id = lookup(" in main_tf  # nosec B101
     assert 'dynamic "required_status_checks"' in main_tf  # nosec B101
     assert "length(each.value.required_check_app_ids) == 0" in main_tf  # nosec B101
+
+
+def test_validate_github_policy_reads_effective_rules_when_classic_protection_is_absent(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    policy = tmp_path / "github-policy.yml"
+    policy.write_text("""
+owner: wgross19
+defaults:
+  repository:
+    visibility: public
+  branch_protection:
+    strict_required_status_checks: true
+    enforce_admins: true
+    require_conversation_resolution: false
+    require_signed_commits: false
+    required_approving_review_count: 0
+  actions:
+    enabled: true
+repositories:
+  example-aio:
+    required_checks:
+      - aio-fleet / required
+    required_check_app_id: 4643060
+""")
+
+    def fake_gh_json(args: list[str]) -> Any:
+        joined = " ".join(args)
+        if joined == "api repos/wgross19/example-aio":
+            return {"visibility": "public"}
+        if joined == "api repos/wgross19/example-aio/branches/main/protection":
+            raise RuntimeError("Branch not protected")
+        if joined == "api repos/wgross19/example-aio/rules/branches/main":
+            return [
+                {
+                    "type": "pull_request",
+                    "ruleset_id": 7,
+                    "parameters": {
+                        "required_approving_review_count": 0,
+                        "required_review_thread_resolution": False,
+                    },
+                },
+                {
+                    "type": "required_status_checks",
+                    "ruleset_id": 7,
+                    "parameters": {
+                        "strict_required_status_checks_policy": True,
+                        "required_status_checks": [
+                            {
+                                "context": "aio-fleet / required",
+                                "integration_id": 4643060,
+                            }
+                        ],
+                    },
+                },
+            ]
+        if joined == "api repos/wgross19/example-aio/rulesets/7":
+            return {"bypass_actors": []}
+        if joined == "api repos/wgross19/example-aio/actions/permissions":
+            return {"enabled": True}
+        raise AssertionError(args)
+
+    monkeypatch.setattr(github_policy, "_gh_json", fake_gh_json)
+
+    assert (  # nosec B101
+        github_policy.validate_github_policy(
+            policy, repos=["example-aio"], check_secrets=False
+        )
+        == []
+    )
