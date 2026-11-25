@@ -162,6 +162,7 @@ jobs:
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'alert-test' }}
         env:
           AIO_FLEET_ALERT_WEBHOOK_URL: ${{ secrets.AIO_FLEET_ALERT_WEBHOOK_URL }}
+          AIO_FLEET_ALERT_WEBHOOK_HMAC_SECRET: ${{ secrets.AIO_FLEET_ALERT_WEBHOOK_HMAC_SECRET }}
           DETAILS_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
@@ -510,6 +511,7 @@ jobs:
           AIO_FLEET_ISSUE_TOKEN: ${{ github.token }}
           AIO_FLEET_KUMA_PUSH_URL: ${{ secrets.AIO_FLEET_KUMA_PUSH_URL }}
           AIO_FLEET_ALERT_WEBHOOK_URL: ${{ secrets.AIO_FLEET_ALERT_WEBHOOK_URL }}
+          AIO_FLEET_ALERT_WEBHOOK_HMAC_SECRET: ${{ secrets.AIO_FLEET_ALERT_WEBHOOK_HMAC_SECRET }}
           MUTATE: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && !inputs.dry_run) || steps.dashboard-controls.outputs.rescan == 'true' || steps.dashboard-controls.outputs.upstream_monitor == 'true' }}
         run: |
           set -euo pipefail
@@ -628,6 +630,7 @@ jobs:
         env:
           AIO_FLEET_KUMA_PUSH_URL: ${{ secrets.AIO_FLEET_KUMA_PUSH_URL }}
           AIO_FLEET_ALERT_WEBHOOK_URL: ${{ secrets.AIO_FLEET_ALERT_WEBHOOK_URL }}
+          AIO_FLEET_ALERT_WEBHOOK_HMAC_SECRET: ${{ secrets.AIO_FLEET_ALERT_WEBHOOK_HMAC_SECRET }}
           DETAILS_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set +e
@@ -975,6 +978,7 @@ jobs:
         env:
           AIO_FLEET_KUMA_PUSH_URL: ${{ secrets.AIO_FLEET_KUMA_PUSH_URL }}
           AIO_FLEET_ALERT_WEBHOOK_URL: ${{ secrets.AIO_FLEET_ALERT_WEBHOOK_URL }}
+          AIO_FLEET_ALERT_WEBHOOK_HMAC_SECRET: ${{ secrets.AIO_FLEET_ALERT_WEBHOOK_HMAC_SECRET }}
           DETAILS_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
           JOB_STATUS: ${{ job.status }}
           MODE: ${{ inputs.mode }}
@@ -1348,6 +1352,7 @@ jobs:
         env:
           AIO_FLEET_KUMA_PUSH_URL: ${{ secrets.AIO_FLEET_KUMA_PUSH_URL }}
           AIO_FLEET_ALERT_WEBHOOK_URL: ${{ secrets.AIO_FLEET_ALERT_WEBHOOK_URL }}
+          AIO_FLEET_ALERT_WEBHOOK_HMAC_SECRET: ${{ secrets.AIO_FLEET_ALERT_WEBHOOK_HMAC_SECRET }}
           DETAILS_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
           CONTROL_REPORT: ${{ runner.temp }}/central-control-report.json
         run: |
@@ -1781,6 +1786,7 @@ jobs:
         env:
           AIO_FLEET_KUMA_PUSH_URL: ${{ secrets.AIO_FLEET_KUMA_PUSH_URL }}
           AIO_FLEET_ALERT_WEBHOOK_URL: ${{ secrets.AIO_FLEET_ALERT_WEBHOOK_URL }}
+          AIO_FLEET_ALERT_WEBHOOK_HMAC_SECRET: ${{ secrets.AIO_FLEET_ALERT_WEBHOOK_HMAC_SECRET }}
           DETAILS_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
           JOB_STATUS: ${{ job.status }}
           TARGET_REPO: ${{ matrix.target.repo }}
@@ -2197,6 +2203,7 @@ jobs:
         env:
           AIO_FLEET_KUMA_PUSH_URL: ${{ secrets.AIO_FLEET_KUMA_PUSH_URL }}
           AIO_FLEET_ALERT_WEBHOOK_URL: ${{ secrets.AIO_FLEET_ALERT_WEBHOOK_URL }}
+          AIO_FLEET_ALERT_WEBHOOK_HMAC_SECRET: ${{ secrets.AIO_FLEET_ALERT_WEBHOOK_HMAC_SECRET }}
           DETAILS_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
           CONTROL_REPORT: ${{ runner.temp }}/poll-central-control-report.json
         run: |
